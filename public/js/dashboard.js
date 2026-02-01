@@ -221,3 +221,78 @@ function wireCardActions() {
         await updateShipmentStatus(shipmentId, statusSelect.value);
         await refreshDashboard();
       }
+
+      if (btn.classList.contains("btnEvent")) {
+        btn.disabled = true;
+        btn.textContent = "Toevoegen...";
+        await addCustomEvent(shipmentId);
+        await refreshDashboard();
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Actie mislukt: " + (err?.message || String(err)));
+    } finally {
+      if (btn && btn.classList) {
+        btn.disabled = false;
+        if (btn.classList.contains("btnUpdate")) btn.textContent = "Status opslaan";
+        if (btn.classList.contains("btnEvent")) btn.textContent = "Event toevoegen";
+      }
+    }
+  });
+}
+
+async function refreshDashboard() {
+  const statusEl = $("status");
+  statusEl.textContent = "Verversing...";
+
+  const session = await requireSession();
+  if (!session) return;
+
+  const userId = session.user.id;
+
+  const shipments = await loadShipmentsWithEvents(userId);
+  renderShipments(shipments);
+}
+
+async function init() {
+  if (!sb) {
+    alert("Supabase client ontbreekt. Check supabase-config.js (window.supabaseClient).");
+    return;
+  }
+
+  const statusEl = $("status");
+  const whoEl = $("whoami");
+  const logoutBtn = $("logoutBtn");
+
+  statusEl.textContent = "Laden...";
+
+  const session = await requireSession();
+  if (!session) return;
+
+  const userId = session.user.id;
+
+  // Naam rechtsboven
+  const driverName = await loadDriverName(userId);
+  whoEl.textContent = driverName || session.user.email || "Ingelogd";
+
+  // Logout
+  logoutBtn?.addEventListener("click", async () => {
+    await sb.auth.signOut();
+    window.location.href = "/dvk-track-trace/driver/login.html";
+  });
+
+  // acties op kaarten
+  wireCardActions();
+
+  // eerste load
+  try {
+    statusEl.textContent = "Zendingen + events ophalen...";
+    const shipments = await loadShipmentsWithEvents(userId);
+    renderShipments(shipments);
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = "Fout bij laden: " + (err?.message || String(err));
+  }
+}
+
+document.addEventListener("DOMContentLoaded", init);
