@@ -1,32 +1,38 @@
-const sb = window.supabaseClient;
-
 document.addEventListener("DOMContentLoaded", () => {
+  const sb = window.supabaseClient;
+
   const emailEl = document.getElementById("email");
   const passEl = document.getElementById("password");
   const btn = document.getElementById("loginBtn");
 
+  if (!sb) {
+    console.error("supabaseClient ontbreekt. Controleer supabase-config.js en script-volgorde.");
+    return;
+  }
   if (!emailEl || !passEl || !btn) {
-    console.error("Login elements not found");
+    console.error("Login elementen niet gevonden (email/password/loginBtn).");
     return;
   }
 
   btn.addEventListener("click", async () => {
     btn.disabled = true;
-    btn.textContent = "Inloggen…";
+    const old = btn.textContent;
+    btn.textContent = "Inloggen...";
 
-    const { data, error } = await sb.auth.signInWithPassword({
-      email: emailEl.value.trim(),
-      password: passEl.value,
-    });
+    try {
+      const { data, error } = await sb.auth.signInWithPassword({
+        email: emailEl.value.trim(),
+        password: passEl.value
+      });
 
-    if (error) {
-      alert("Inloggen mislukt: " + error.message);
+      if (error) throw error;
+
+      // Succes -> doorsturen
+      window.location.href = "./dashboard.html";
+    } catch (e) {
+      alert("Inloggen mislukt: " + (e?.message || e));
       btn.disabled = false;
-      btn.textContent = "Inloggen";
-      return;
+      btn.textContent = old;
     }
-    
-    window.location.href =
-      "/dvk-track-trace/driver/dashboard.html";
   });
 });
