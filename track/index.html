@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Track & Trace | DVK</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <strong>De Vechtse Koeriers</strong>
+        <span>Track & Trace</span>
+      </div>
+      <a class="small" href="/">← Home</a>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h1 class="h1">Volg je zending</h1>
+        <p class="small">Vul je trackcode in om de status te bekijken.</p>
+
+        <div class="row" style="margin-top:12px">
+          <input id="code" placeholder="Bijv. DVK12345" />
+          <button id="btn">Zoeken</button>
+        </div>
+
+        <hr>
+
+        <div id="result" class="item">
+          <strong>Status</strong>
+          <div class="badge">Nog geen gegevens</div>
+          <p class="small" style="margin:10px 0 0">Voer een trackcode in.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="h2">Tip</h2>
+        <p class="small">
+          Je ontvangt de trackcode via e-mail of van de verzender.
+        </p>
+        <hr>
+        <h2 class="h2">Voorbeeldcodes</h2>
+        <div class="list">
+          <div class="item small">DVK12345</div>
+          <div class="item small">DVK67890</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/public/js/app.js"></script>
+</body>
+</html>
