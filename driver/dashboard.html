@@ -5,17 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chauffeur dashboard | DVK</title>
 
-  <link rel="stylesheet" href="../public/css/style.css" />
+  <!-- Jouw bestaande stylesheet -->
+  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
 
+  <!-- Kleine extra styling voor tegels / events -->
   <style>
     .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; }
-    .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:rgba(255,255,255,.92); cursor:pointer; }
+    .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:rgba(255,255,255,.92); cursor:pointer; }
     .grid { display:grid; gap:12px; margin-top:14px; }
-    .ship-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px; background:rgba(255,255,255,.03); }
+    .ship-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; background:rgba(255,255,255,.03); }
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .muted { opacity:.7; font-size:13px; }
-
     .badge { padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,.10); }
+
     .b-created { background:rgba(59,130,246,.18); }
     .b-en_route { background:rgba(245,158,11,.18); }
     .b-delivered { background:rgba(34,197,94,.18); }
@@ -52,8 +54,11 @@
     </div>
   </div>
 
+  <!-- Supabase library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="../public/js/supabase-config.js"></script>
-  <script src="../public/js/dashboard.js"></script>
+
+  <!-- Let op: absolute paden i.v.m. GitHub Pages -->
+  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
+  <script src="/dvk-track-trace/public/js/dashboard.js"></script>
 </body>
 </html>
