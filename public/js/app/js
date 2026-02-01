@@ -1,4 +1,3 @@
-// Supabase client
 const supabase = window.supabase.createClient(
   window.DVK_SUPABASE_URL,
   window.DVK_SUPABASE_ANON_KEY
@@ -37,26 +36,23 @@ function renderOk(status, note) {
 }
 
 async function lookupTrack(code) {
-  // 1) shipment ophalen op track_code
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("id, status, updated_at, last_location_lat, last_location_lng")
+    .select("id, status")
     .eq("track_code", code)
     .maybeSingle();
 
   if (error) return renderError("Fout bij ophalen");
   if (!shipment) return renderError("Onbekende trackcode");
 
-  // 2) laatste event ophalen (optioneel maar mooi)
   const { data: events } = await supabase
     .from("shipment_events")
-    .select("event_type, note, created_at")
+    .select("note, created_at")
     .eq("shipment_id", shipment.id)
     .order("created_at", { ascending: false })
     .limit(1);
 
-  const lastNote = events?.[0]?.note || "Status bijgewerkt.";
-  renderOk(shipment.status, lastNote);
+  renderOk(shipment.status, events?.[0]?.note || "Status bijgewerkt.");
 }
 
 btn?.addEventListener("click", () => {
