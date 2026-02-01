@@ -1,139 +1,178 @@
+// public/js/dashboard.js
+// DVK Track & Trace – Chauffeur Dashboard
+
+const BASE = "/dvk-track-trace"; // GitHub Pages repo path
 const sb = window.supabaseClient;
 
-function badgeClass(statusOrEvent) {
-  const s = (statusOrEvent || "").toLowerCase();
-  if (s === "created") return "badge b-created";
-  if (s === "en_route") return "badge b-en_route";
-  if (s === "delivered") return "badge b-delivered";
-  if (s === "problem") return "badge b-problem";
-  // fallback: gebruik status zelf
-  if (s.includes("route")) return "badge b-en_route";
-  return "badge";
+function $(id) {
+  return document.getElementById(id);
 }
 
-function label(s) {
-  const map = {
-    created: "Aangemeld",
-    en_route: "Onderweg",
-    delivered: "Afgeleverd",
-    problem: "Probleem"
-  };
-  return map[s] || s || "-";
-}
-
-function fmtTime(iso) {
+function fmtDate(iso) {
   if (!iso) return "";
   try {
     const d = new Date(iso);
-    return d.toLocaleString("nl-NL", { dateStyle: "short", timeStyle: "short" });
-  } catch { return ""; }
+    return d.toLocaleString("nl-NL", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
 }
 
-async function requireLogin() {
-  const { data } = await sb.auth.getSession();
-  if (!data.session) {
-    // RELATIEF zodat GitHub Pages altijd klopt
-    window.location.href = "./login.html";
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function requireSession() {
+  const { data, error } = await sb.auth.getSession();
+  if (error) throw error;
+
+  const session = data?.session;
+  if (!session?.user) {
+    window.location.href = `${BASE}/driver/login.html`;
     return null;
   }
-  return data.session;
+  return session;
 }
 
 async function loadDashboard() {
-  const statusEl = document.getElementById("status");
-  const listEl = document.getElementById("list");
-  const who = document.getElementById("whoami");
+  const statusEl = $("status");
+  const listEl = $("list");
+  const whoEl = $("who");
+  const logoutBtn = $("logoutBtn");
 
-  const session = await requireLogin();
+  if (!sb) {
+    statusEl.textContent = "Supabase client ontbreekt (window.supabaseClient).";
+    return;
+  }
+
+  // Logout
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await sb.auth.signOut();
+      } finally {
+        window.location.href = `${BASE}/driver/login.html`;
+      }
+    });
+  }
+
+  statusEl.textContent = "Controleren of je ingelogd bent...";
+  const session = await requireSession();
   if (!session) return;
 
   const userId = session.user.id;
-  who.textContent = session.user.email || userId;
 
-  // Driver naam ophalen (optioneel)
-  const { data: driverRow } = await sb
+  // Chauffeurnaam ophalen (drivers.user_id = auth.user.id)
+  statusEl.textContent = "Chauffeur gegevens ophalen...";
+  const { data: driverRow, error: driverErr } = await sb
     .from("drivers")
     .select("name")
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (driverRow?.name) who.textContent = driverRow.name;
+  if (!driverErr && driverRow?.name && whoEl) {
+    whoEl.textContent = driverRow.name;
+  }
 
-  statusEl.textContent = "Zendingen ophalen…";
+  // Shipments + events ophalen in 1 query (nested)
+  statusEl.textContent = "Zendingen + events ophalen...";
 
-  // Shipments voor ingelogde chauffeur
   const { data: shipments, error: shipErr } = await sb
     .from("shipments")
-    .select("id, track_code, status, customer_name, created_at")
+    .select(
+      `
+      id,
+      track_code,
+      status,
+      customer_name,
+      created_at,
+      shipment_events (
+        event_type,
+        note,
+        created_at
+      )
+    `
+    )
     .eq("driver_id", userId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    // Belangrijk: events binnen shipment sorteren
+    .order("created_at", { ascending: false, foreignTable: "shipment_events" });
 
   if (shipErr) {
-    statusEl.textContent = "Fout bij ophalen shipments: " + shipErr.message;
+    console.error(shipErr);
+    statusEl.textContent = "Fout bij ophalen zendingen: " + shipErr.message;
     return;
   }
 
-  if (!shipments || shipments.length === 0) {
-    statusEl.textContent = "Geen zendingen gevonden voor deze chauffeur.";
-    listEl.innerHTML = "";
-    return;
-  }
-
-  // Events in 1x ophalen (sneller): waar shipment_id IN (...)
-  const ids = shipments.map(s => s.id);
-  const { data: events, error: evErr } = await sb
-    .from("shipment_events")
-    .select("id, shipment_id, event_type, note, created_at")
-    .in("shipment_id", ids)
-    .order("created_at", { ascending: true });
-
-  if (evErr) {
-    statusEl.textContent = "Fout bij ophalen events: " + evErr.message;
-    return;
-  }
-
-  // Groepeer events per shipment_id
-  const byShipment = new Map();
-  (events || []).forEach(e => {
-    const arr = byShipment.get(e.shipment_id) || [];
-    arr.push(e);
-    byShipment.set(e.shipment_id, arr);
-  });
-
-  statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
+  // Tegels renderen
   listEl.innerHTML = "";
 
-  shipments.forEach(s => {
-    const evs = byShipment.get(s.id) || [];
-    const lastEvent = evs.length ? evs[evs.length - 1].event_type : null;
+  if (!shipments || shipments.length === 0) {
+    statusEl.textContent = "Geen zendingen gevonden.";
+    return;
+  }
+
+  statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
+
+  shipments.forEach((s) => {
+    const events = Array.isArray(s.shipment_events) ? s.shipment_events : [];
+
+    const eventsHtml =
+      events.length === 0
+        ? `<div class="muted">Nog geen events.</div>`
+        : `
+          <ul class="events">
+            ${events
+              .map(
+                (e) => `
+              <li>
+                <span class="badge">${escapeHtml(e.event_type)}</span>
+                <span class="note">${escapeHtml(e.note)}</span>
+                <span class="time">${escapeHtml(fmtDate(e.created_at))}</span>
+              </li>
+            `
+              )
+              .join("")}
+          </ul>
+        `;
 
     const card = document.createElement("div");
-    card.className = "ship-card";
-
+    card.className = "shipment-card";
     card.innerHTML = `
-      <div class="row">
-        <strong style="font-size:16px">#${s.track_code}</strong>
-        <span class="${badgeClass(lastEvent || s.status)}">${label(lastEvent || s.status)}</span>
-        <span class="muted">Klant: ${s.customer_name || "-"}</span>
-        <span class="muted">Aangemaakt: ${fmtTime(s.created_at)}</span>
+      <div class="shipment-head">
+        <div class="track">#${escapeHtml(s.track_code)}</div>
+        <div class="status-chip">${escapeHtml(s.status)}</div>
       </div>
 
-      <ul class="events">
-        ${
-          evs.length
-            ? evs.map(e => `<li><strong>${label(e.event_type)}</strong> — ${e.note || ""} <span class="muted">(${fmtTime(e.created_at)})</span></li>`).join("")
-            : `<li class="muted">Nog geen events.</li>`
-        }
-      </ul>
+      <div class="shipment-meta">
+        <div><span class="muted">Klant:</span> ${escapeHtml(s.customer_name)}</div>
+        <div><span class="muted">Aangemaakt:</span> ${escapeHtml(fmtDate(s.created_at))}</div>
+      </div>
+
+      <div class="shipment-events">
+        ${eventsHtml}
+      </div>
     `;
 
     listEl.appendChild(card);
   });
 }
 
-document.getElementById("logoutBtn")?.addEventListener("click", async () => {
-  await sb.auth.signOut();
-  window.location.href = "./login.html";
+document.addEventListener("DOMContentLoaded", () => {
+  loadDashboard().catch((err) => {
+    console.error(err);
+    const statusEl = document.getElementById("status");
+    if (statusEl) statusEl.textContent = "Dashboard fout: " + (err?.message || err);
+  });
 });
-
-document.addEventListener("DOMContentLoaded", loadDashboard);
