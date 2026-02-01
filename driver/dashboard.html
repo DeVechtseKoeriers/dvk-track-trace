@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard | DVK</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <strong>De Vechtse Koeriers</strong>
+        <span>Chauffeur dashboard</span>
+      </div>
+      <a class="small" href="/driver/login.html">Uitloggen</a>
+    </div>
+
+    <div class="grid">
+      <!-- Ritten -->
+      <div class="card">
+        <h1 class="h1">Mijn ritten</h1>
+        <p class="small">Demo data – Supabase koppeling volgt.</p>
+
+        <div class="list" style="margin-top:12px">
+          <div class="item">
+            <strong>DVK12345</strong>
+            <div class="badge warn">Onderweg</div>
+
+            <div class="row" style="margin-top:10px">
+              <button class="secondary">Start rit</button>
+              <button>Afgeleverd</button>
+            </div>
+          </div>
+
+          <div class="item">
+            <strong>DVK67890</strong>
+            <div class="badge ok">Afgeleverd</div>
+            <p class="small" style="margin:10px 0 0">
+              Geen actie nodig
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Locatie -->
+      <div class="card">
+        <h2 class="h2">Locatie delen</h2>
+        <p class="small">
+          Automatisch elke 10–30 seconden (later via Supabase).
+        </p>
+        <button class="secondary" disabled>
+          Locatie delen (komt later)
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
