@@ -2,21 +2,25 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chauffeur dashboard | DVK</title>
-  <link rel="stylesheet" href="../public/css/style.css">
+
+  <link rel="stylesheet" href="../public/css/style.css" />
+
   <style>
     .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; }
-    .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:#fff; cursor:pointer; }
+    .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:rgba(255,255,255,.92); cursor:pointer; }
     .grid { display:grid; gap:12px; margin-top:14px; }
-    .ship-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; background:rgba(255,255,255,.04); }
+    .ship-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px; background:rgba(255,255,255,.03); }
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     .muted { opacity:.7; font-size:13px; }
+
     .badge { padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,.10); }
     .b-created { background:rgba(59,130,246,.18); }
     .b-en_route { background:rgba(245,158,11,.18); }
     .b-delivered { background:rgba(34,197,94,.18); }
     .b-problem { background:rgba(239,68,68,.18); }
+
     .events { margin-top:10px; padding-left:18px; }
     .events li { margin:6px 0; }
     .sep { height:1px; background:rgba(255,255,255,.08); margin:12px 0; }
@@ -32,7 +36,7 @@
       </div>
 
       <div class="topbar-right">
-        <span class="muted" id="whoami">…</span>
+        <span class="muted" id="whoami">...</span>
         <button class="btn" id="logoutBtn">Uitloggen</button>
       </div>
     </div>
@@ -43,7 +47,7 @@
 
       <div class="sep"></div>
 
-      <div id="status" class="muted">Laden…</div>
+      <div id="status" class="muted">Laden...</div>
       <div id="list" class="grid"></div>
     </div>
   </div>
