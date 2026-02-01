@@ -218,3 +218,5 @@ async function init() {
     statusEl.textContent = "Fout bij laden: " + (err?.message || String(err));
   }
 }
+
+document.addEventListener("DOMContentLoaded", init);
