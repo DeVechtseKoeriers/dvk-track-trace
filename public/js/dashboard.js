@@ -1,170 +1,223 @@
+/* DVK Driver Dashboard - shipments + events + status update + add event
+   Vereist:
+   - supabase-config.js zet window.supabaseClient = supabase.createClient(URL, ANON)
+   - dashboard.html heeft #status, #list, #whoami, #logoutBtn
+*/
+
 const sb = window.supabaseClient;
 
-document.addEventListener("DOMContentLoaded", () => {
-  const statusEl = document.getElementById("status");
-  const listEl = document.getElementById("list");
-  const whoEl = document.getElementById("whoami");
-  const logoutBtn = document.getElementById("logoutBtn");
+function $(id) {
+  return document.getElementById(id);
+}
 
-  // Handige helpers
-  const fmt = (iso) => {
-    if (!iso) return "";
-    try {
-      const d = new Date(iso);
-      return d.toLocaleString("nl-NL", { year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
-    } catch {
-      return iso;
-    }
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  // NL weergave
+  return d.toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function statusLabel(status) {
+  const map = {
+    created: "Aangemeld",
+    en_route: "Onderweg",
+    delivered: "Afgeleverd",
+    problem: "Probleem",
   };
+  return map[status] || status || "-";
+}
 
-  const badgeClass = (status) => {
-    const s = (status || "").toLowerCase();
-    if (s === "created") return "b-created";
-    if (s === "en_route") return "b-en_route";
-    if (s === "delivered") return "b-delivered";
-    return "b-problem";
+function badgeClass(status) {
+  const map = {
+    created: "b-created",
+    en_route: "b-en_route",
+    delivered: "b-delivered",
+    problem: "b-problem",
   };
+  return map[status] || "b-created";
+}
 
-  const niceLabel = (v) => {
-    const s = (v || "").toLowerCase();
-    if (s === "created") return "Aangemeld";
-    if (s === "en_route") return "Onderweg";
-    if (s === "delivered") return "Afgeleverd";
-    return v || "Onbekend";
-  };
-
-  // Uitloggen
-  logoutBtn?.addEventListener("click", async () => {
-    await sb.auth.signOut();
+async function requireSession() {
+  const { data } = await sb.auth.getSession();
+  const session = data?.session;
+  if (!session) {
+    // niet ingelogd => terug naar login
     window.location.href = "/dvk-track-trace/driver/login.html";
-  });
+    return null;
+  }
+  return session;
+}
 
-  // MAIN
-  loadDashboard().catch((e) => {
-    console.error(e);
-    statusEl.textContent = "Fout: " + (e?.message || e);
-  });
-
-  async function loadDashboard() {
-    statusEl.textContent = "Inloggen controleren...";
-    listEl.innerHTML = "";
-
-    // 1) check login
-    const { data: userRes, error: userErr } = await sb.auth.getUser();
-    if (userErr) {
-      console.error(userErr);
-      statusEl.textContent = "Fout bij ophalen sessie: " + userErr.message;
-      return;
-    }
-
-    const user = userRes?.user;
-    if (!user) {
-      // niet ingelogd
-      window.location.href = "/dvk-track-trace/driver/login.html";
-      return;
-    }
-
-    const userId = user.id;
-
-    // 2) Naam chauffeur ophalen (drivers tabel)
-    statusEl.textContent = "Chauffeur ophalen...";
-    const { data: driverRow, error: driverErr } = await sb
+async function loadDriverName(userId) {
+  // Optioneel: drivers tabel (name)
+  // Als dit faalt door RLS of ontbrekende rij: we tonen gewoon email.
+  try {
+    const { data: driverRow } = await sb
       .from("drivers")
       .select("name")
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (!driverErr && driverRow?.name && whoEl) {
-      whoEl.textContent = driverRow.name;
-    } else if (whoEl) {
-      // fallback: email tonen
-      whoEl.textContent = user.email || userId;
-    }
-
-    // 3) Shipments + events ophalen (nested)
-    statusEl.textContent = "Zendingen + events ophalen...";
-
-    const { data: shipments, error: shipErr } = await sb
-      .from("shipments")
-      .select(`
-        id,
-        track_code,
-        status,
-        customer_name,
-        created_at,
-        shipment_events (
-          event_type,
-          note,
-          created_at
-        )
-      `)
-      .eq("driver_id", userId)
-      .order("created_at", { ascending: false })
-      // events binnen shipment sorteren (nieuwste bovenaan)
-      .order("created_at", { ascending: false, foreignTable: "shipment_events" });
-
-    if (shipErr) {
-      console.error(shipErr);
-      statusEl.textContent = "Fout bij ophalen zendingen: " + shipErr.message;
-      return;
-    }
-
-    listEl.innerHTML = "";
-
-    if (!shipments || shipments.length === 0) {
-      statusEl.textContent = "Geen zendingen gevonden.";
-      return;
-    }
-
-    statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
-
-    // 4) Render cards
-    shipments.forEach((s) => {
-      const card = document.createElement("div");
-      card.className = "ship-card";
-
-      const code = s.track_code || "(geen code)";
-      const status = s.status || "unknown";
-      const customer = s.customer_name || "-";
-      const created = fmt(s.created_at);
-
-      const header = document.createElement("div");
-      header.className = "row";
-      header.innerHTML = `
-        <strong>#${code}</strong>
-        <span class="badge ${badgeClass(status)}">${niceLabel(status)}</span>
-        <span class="muted">Klant: ${customer}</span>
-        <span class="muted">Aangemaakt: ${created}</span>
-      `;
-
-      card.appendChild(header);
-
-      // Events
-      const events = Array.isArray(s.shipment_events) ? s.shipment_events : [];
-
-      if (events.length === 0) {
-        const p = document.createElement("div");
-        p.className = "muted";
-        p.style.marginTop = "10px";
-        p.textContent = "Nog geen events.";
-        card.appendChild(p);
-      } else {
-        const ul = document.createElement("ul");
-        ul.className = "events";
-
-        events.forEach((e) => {
-          const li = document.createElement("li");
-          const t = niceLabel(e.event_type);
-          const note = e.note ? ` – ${e.note}` : "";
-          const at = e.created_at ? ` (${fmt(e.created_at)})` : "";
-          li.textContent = `${t}${note}${at}`;
-          ul.appendChild(li);
-        });
-
-        card.appendChild(ul);
-      }
-
-      listEl.appendChild(card);
-    });
+    return driverRow?.name || null;
+  } catch {
+    return null;
   }
-});
+}
+
+async function loadShipmentsWithEvents(userId) {
+  // Nested select: shipments + shipment_events
+  const { data: shipments, error } = await sb
+    .from("shipments")
+    .select(`
+      id,
+      track_code,
+      status,
+      customer_name,
+      created_at,
+      shipment_events (
+        event_type,
+        note,
+        created_at
+      )
+    `)
+    .eq("driver_id", userId)
+    .order("created_at", { ascending: false })
+    // sorteer events binnen elke shipment:
+    .order("created_at", { ascending: false, foreignTable: "shipment_events" });
+
+  if (error) throw error;
+  return shipments || [];
+}
+
+function renderShipments(shipments) {
+  const listEl = $("list");
+  const statusEl = $("status");
+
+  listEl.innerHTML = "";
+
+  statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
+
+  for (const s of shipments) {
+    const events = Array.isArray(s.shipment_events) ? s.shipment_events : [];
+    const eventsHtml = events.length
+      ? `<ul class="events">
+          ${events
+            .slice(0, 6)
+            .map(
+              (e) => `
+              <li>
+                <span class="badge ${badgeClass(e.event_type)}">${escapeHtml(e.event_type)}</span>
+                <span class="muted">${escapeHtml(e.note || "")}</span>
+                <div class="muted" style="margin-top:4px">${formatDateTime(e.created_at)}</div>
+              </li>`
+            )
+            .join("")}
+        </ul>`
+      : `<div class="muted" style="margin-top:10px">Nog geen events.</div>`;
+
+    const card = document.createElement("div");
+    card.className = "ship-card";
+    card.dataset.shipmentId = s.id;
+
+    card.innerHTML = `
+      <div class="row" style="justify-content:space-between">
+        <div style="font-size:18px;font-weight:700">#${escapeHtml(s.track_code)}</div>
+        <span class="badge ${badgeClass(s.status)}">${escapeHtml(statusLabel(s.status))}</span>
+      </div>
+
+      <div class="row muted" style="margin-top:6px">
+        <div><strong>Klant:</strong> ${escapeHtml(s.customer_name)}</div>
+      </div>
+
+      <div class="row muted">
+        <div><strong>Aangemaakt:</strong> ${formatDateTime(s.created_at)}</div>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="row" style="gap:8px; flex-wrap:wrap">
+        <select class="statusSelect">
+          <option value="created" ${s.status === "created" ? "selected" : ""}>Aangemeld</option>
+          <option value="en_route" ${s.status === "en_route" ? "selected" : ""}>Onderweg</option>
+          <option value="delivered" ${s.status === "delivered" ? "selected" : ""}>Afgeleverd</option>
+          <option value="problem" ${s.status === "problem" ? "selected" : ""}>Probleem</option>
+        </select>
+
+        <button class="btn btnUpdate">Status opslaan</button>
+        <button class="btn btnEvent">Event toevoegen</button>
+      </div>
+
+      ${eventsHtml}
+    `;
+
+    listEl.appendChild(card);
+  }
+}
+
+async function updateShipmentStatus(shipmentId, newStatus) {
+  // 1) update shipment
+  const { error: upErr } = await sb
+    .from("shipments")
+    .update({ status: newStatus })
+    .eq("id", shipmentId);
+
+  if (upErr) throw upErr;
+
+  // 2) log als event (optioneel, maar superhandig)
+  const note =
+    newStatus === "delivered"
+      ? "Zending afgeleverd"
+      : newStatus === "problem"
+      ? "Probleem gemeld"
+      : newStatus === "en_route"
+      ? "Chauffeur is onderweg"
+      : "Zending aangemeld";
+
+  const { error: evErr } = await sb
+    .from("shipment_events")
+    .insert([{ shipment_id: shipmentId, event_type: newStatus, note }]);
+
+  if (evErr) throw evErr;
+}
+
+async function addCustomEvent(shipmentId) {
+  const type = prompt("Event type (bijv: note / delivered / problem / en_route):", "note");
+  if (!type) return;
+
+  const note = prompt("Event omschrijving:", "");
+  if (note === null) return;
+
+  const { error } = await sb
+    .from("shipment_events")
+    .insert([{ shipment_id: shipmentId, event_type: type.trim(), note: (note || "").trim() }]);
+
+  if (error) throw error;
+}
+
+function wireCardActions() {
+  const listEl = $("list");
+
+  listEl.addEventListener("click", async (e) => {
+    const btn = e.target;
+    const card = btn.closest(".ship-card");
+    if (!card) return;
+
+    const shipmentId = card.dataset.shipmentId;
+    const statusSelect = card.querySelector(".statusSelect");
+
+    try {
+      if (btn.classList.contains("btnUpdate")) {
+        btn.disabled = true;
+        btn.textContent = "Opslaan...";
+        await updateShipmentStatus(shipmentId, statusSelect.value);
+        await refreshDashboard();
+      }
