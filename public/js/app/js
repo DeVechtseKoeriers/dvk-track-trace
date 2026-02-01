@@ -1,42 +1,66 @@
+// Supabase client
+const supabase = window.supabase.createClient(
+  window.DVK_SUPABASE_URL,
+  window.DVK_SUPABASE_ANON_KEY
+);
+
 const btn = document.getElementById("btn");
 const codeInput = document.getElementById("code");
 const result = document.getElementById("result");
 
-// Demo data (wordt later Supabase)
-const demoShipments = {
-  "DVK12345": {
-    status: "Onderweg",
-    badge: "warn",
-    note: "Chauffeur is onderweg."
-  },
-  "DVK67890": {
-    status: "Afgeleverd",
-    badge: "ok",
-    note: "Zending is succesvol afgeleverd."
-  }
-};
-
-function renderResult(code) {
-  const data = demoShipments[code];
-  if (!data) {
-    result.innerHTML = `
-      <strong>Status</strong>
-      <div class="badge bad">Onbekende trackcode</div>
-      <p class="small" style="margin-top:8px">
-        Controleer de code en probeer opnieuw.
-      </p>
-    `;
-    return;
-  }
-
+function renderError(msg) {
   result.innerHTML = `
     <strong>Status</strong>
-    <div class="badge ${data.badge}">${data.status}</div>
-    <p class="small" style="margin-top:8px">${data.note}</p>
+    <div class="badge bad">${msg}</div>
+    <p class="small" style="margin-top:8px">Controleer de code en probeer opnieuw.</p>
   `;
 }
 
+function renderOk(status, note) {
+  const badge =
+    status === "delivered" ? "ok" :
+    status === "en_route" ? "warn" :
+    status === "picked_up" ? "warn" :
+    status === "created" ? "" : "";
+
+  const label =
+    status === "delivered" ? "Afgeleverd" :
+    status === "en_route" ? "Onderweg" :
+    status === "picked_up" ? "Opgehaald" :
+    status === "created" ? "Aangemeld" : status;
+
+  result.innerHTML = `
+    <strong>Status</strong>
+    <div class="badge ${badge}">${label}</div>
+    <p class="small" style="margin-top:8px">${note || ""}</p>
+  `;
+}
+
+async function lookupTrack(code) {
+  // 1) shipment ophalen op track_code
+  const { data: shipment, error } = await supabase
+    .from("shipments")
+    .select("id, status, updated_at, last_location_lat, last_location_lng")
+    .eq("track_code", code)
+    .maybeSingle();
+
+  if (error) return renderError("Fout bij ophalen");
+  if (!shipment) return renderError("Onbekende trackcode");
+
+  // 2) laatste event ophalen (optioneel maar mooi)
+  const { data: events } = await supabase
+    .from("shipment_events")
+    .select("event_type, note, created_at")
+    .eq("shipment_id", shipment.id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  const lastNote = events?.[0]?.note || "Status bijgewerkt.";
+  renderOk(shipment.status, lastNote);
+}
+
 btn?.addEventListener("click", () => {
-  const code = codeInput.value.trim().toUpperCase();
-  renderResult(code);
+  const code = (codeInput?.value || "").trim().toUpperCase();
+  if (!code) return renderError("Voer een trackcode in");
+  lookupTrack(code);
 });
