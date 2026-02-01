@@ -1,4 +1,4 @@
-const supabase = window.supabase.createClient(
+const supabase = window.supabaseClient;
   window.DVK_SUPABASE_URL,
   window.DVK_SUPABASE_ANON_KEY
 );
