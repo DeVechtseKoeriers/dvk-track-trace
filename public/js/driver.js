@@ -1,4 +1,4 @@
-const supabase = window.supabaseClient;
+const sb = window.supabaseClient;
 
 document.addEventListener("DOMContentLoaded", () => {
   const emailEl = document.getElementById("email");
@@ -14,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
     btn.disabled = true;
     btn.textContent = "Inloggen…";
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await sb.auth.signInWithPassword({
       email: emailEl.value.trim(),
       password: passEl.value,
     });
