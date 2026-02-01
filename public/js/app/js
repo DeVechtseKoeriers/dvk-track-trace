@@ -1,0 +1,42 @@
+const btn = document.getElementById("btn");
+const codeInput = document.getElementById("code");
+const result = document.getElementById("result");
+
+// Demo data (wordt later Supabase)
+const demoShipments = {
+  "DVK12345": {
+    status: "Onderweg",
+    badge: "warn",
+    note: "Chauffeur is onderweg."
+  },
+  "DVK67890": {
+    status: "Afgeleverd",
+    badge: "ok",
+    note: "Zending is succesvol afgeleverd."
+  }
+};
+
+function renderResult(code) {
+  const data = demoShipments[code];
+  if (!data) {
+    result.innerHTML = `
+      <strong>Status</strong>
+      <div class="badge bad">Onbekende trackcode</div>
+      <p class="small" style="margin-top:8px">
+        Controleer de code en probeer opnieuw.
+      </p>
+    `;
+    return;
+  }
+
+  result.innerHTML = `
+    <strong>Status</strong>
+    <div class="badge ${data.badge}">${data.status}</div>
+    <p class="small" style="margin-top:8px">${data.note}</p>
+  `;
+}
+
+btn?.addEventListener("click", () => {
+  const code = codeInput.value.trim().toUpperCase();
+  renderResult(code);
+});
