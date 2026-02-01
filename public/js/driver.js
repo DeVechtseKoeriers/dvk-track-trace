@@ -25,8 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
       btn.textContent = "Inloggen";
       return;
     }
-
-    // Succes
+    
     window.location.href =
       "/dvk-track-trace/driver/dashboard.html";
   });
