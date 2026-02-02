@@ -1,42 +1,43 @@
-/* dvk-track-trace / public / js / dashboard.js */
-
-/* global window, document */
+/* =========================================================
+   DVK – Chauffeur Dashboard
+   Bestand: public/js/dashboard.js
+   Doel:
+   - Ingelogde chauffeur
+   - Zendingen ophalen
+   - PER ZENDING alleen LAATSTE STATUS tonen
+   ========================================================= */
 
 const sb = window.supabaseClient;
 
-// DOM refs
+// DOM
 const whoEl = document.getElementById("whoami");
 const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
+const skeletonsEl = document.getElementById("skeletons");
 
-// ---------------- Skeleton helpers ----------------
+/* ---------------- Skeleton helpers ---------------- */
 function showSkeletons() {
-  const sk = document.getElementById("skeletons");
-  if (sk) sk.style.display = "grid";
+  if (skeletonsEl) skeletonsEl.style.display = "grid";
   if (listEl) listEl.style.display = "none";
 }
 
 function hideSkeletons() {
-  const sk = document.getElementById("skeletons");
-  if (sk) sk.style.display = "none";
+  if (skeletonsEl) skeletonsEl.style.display = "none";
   if (listEl) listEl.style.display = "grid";
 }
 
-// ---------------- Helpers ----------------
+/* ---------------- Helpers ---------------- */
 function esc(s) {
   return String(s ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replaceAll(">", "&gt;");
 }
 
-function fmtDT(iso) {
+function fmtDate(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("nl-NL", {
     year: "numeric",
     month: "2-digit",
@@ -46,7 +47,7 @@ function fmtDT(iso) {
   });
 }
 
-// ---------------- Auth ----------------
+/* ---------------- Auth ---------------- */
 async function requireSession() {
   const { data } = await sb.auth.getSession();
   if (!data?.session) {
@@ -56,62 +57,83 @@ async function requireSession() {
   return data.session;
 }
 
-// ---------------- Data ----------------
+/* ---------------- Data ---------------- */
 async function loadShipmentsWithEvents(userId) {
   const { data, error } = await sb
     .from("shipments")
     .select(`
       id,
       reference,
-      status,
+      customer_name,
       created_at,
-      events (
-        id,
-        type,
-        created_at,
-        description
+      shipment_events (
+        event_type,
+        note,
+        created_at
       )
     `)
     .eq("driver_id", userId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .order("created_at", {
+      foreignTable: "shipment_events",
+      ascending: false,
+    });
 
   if (error) throw error;
-  return data ?? [];
+  return data || [];
 }
 
-// ---------------- Render ----------------
+/* ---------------- Status mapping ---------------- */
+function statusFromEvent(event) {
+  if (!event) {
+    return { text: "Onbekend", cls: "badge" };
+  }
+
+  switch (event.event_type) {
+    case "created":
+      return { text: "Aangemeld", cls: "badge warn" };
+    case "en_route":
+      return { text: "Onderweg", cls: "badge ok" };
+    case "delivered":
+      return { text: "Afgeleverd", cls: "badge done" };
+    default:
+      return { text: event.event_type, cls: "badge" };
+  }
+}
+
+/* ---------------- Render ---------------- */
 function renderShipments(shipments) {
   listEl.innerHTML = "";
 
+  if (!shipments.length) {
+    statusEl.textContent = "Geen zendingen gevonden.";
+    return;
+  }
+
   shipments.forEach((s) => {
+    const latestEvent = s.shipment_events?.[0];
+    const status = statusFromEvent(latestEvent);
+
     const card = document.createElement("div");
     card.className = "ship-card";
 
     card.innerHTML = `
       <div class="row">
-        <strong>#${esc(s.reference || s.id)}</strong>
-        <span class="badge">${esc(s.status)}</span>
+        <strong>#${esc(s.reference)}</strong>
+        <span class="${status.cls}">${status.text}</span>
       </div>
-      <div class="muted">Aangemaakt: ${fmtDT(s.created_at)}</div>
-      <div class="events">
-        ${(s.events || [])
-          .map(
-            (e) => `
-          <div class="event">
-            <span>${fmtDT(e.created_at)}</span>
-            <strong>${esc(e.type)}</strong>
-            <div class="muted">${esc(e.description || "")}</div>
-          </div>`
-          )
-          .join("")}
-      </div>
+
+      <div class="muted">Klant: ${esc(s.customer_name || "-")}</div>
+      <div class="muted">Aangemaakt: ${fmtDate(s.created_at)}</div>
     `;
 
     listEl.appendChild(card);
   });
+
+  statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
 }
 
-// ---------------- Main ----------------
+/* ---------------- Init ---------------- */
 async function init() {
   showSkeletons();
 
@@ -121,33 +143,27 @@ async function init() {
       return;
     }
 
-    statusEl.textContent = "Sessie controleren…";
     const session = await requireSession();
     if (!session) return;
 
     const userId = session.user.id;
+    window.__DVK_USER_ID__ = userId;
 
-    if (whoEl) {
-      whoEl.textContent = session.user.email;
-    }
+    // Naam rechtsboven
+    if (whoEl) whoEl.textContent = session.user.email;
 
+    // Logout
     logoutBtn?.addEventListener("click", async () => {
       await sb.auth.signOut();
       window.location.href = "/dvk-track-trace/driver/login.html";
     });
 
-    statusEl.textContent = "Zendingen laden…";
+    statusEl.textContent = "Zendingen laden...";
     const shipments = await loadShipmentsWithEvents(userId);
 
     hideSkeletons();
-
-    if (!shipments.length) {
-      statusEl.textContent = "Geen zendingen gevonden.";
-      return;
-    }
-
-    statusEl.textContent = "";
     renderShipments(shipments);
+
   } catch (err) {
     console.error(err);
     hideSkeletons();
