@@ -1,6 +1,7 @@
 /* ==========================================================
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
+   Stap A2: Afgeleverd -> naam ontvanger verplicht
    ========================================================== */
 
 /* Supabase client (gezet in supabase-config.js) */
@@ -33,7 +34,13 @@ function setStatus(msg, isError = false) {
 function fmtDT(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString("nl-NL", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("nl-NL", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function shortId(id) {
@@ -49,7 +56,6 @@ async function requireSession() {
   if (error) throw error;
   const session = data?.session;
   if (!session) {
-    // terug naar login/driver index (pas aan als jouw login elders zit)
     window.location.href = "/dvk-track-trace/driver/index.html";
     return null;
   }
@@ -69,7 +75,6 @@ async function signOut() {
    Data ophalen
 ------------------------- */
 async function loadShipmentsWithEvents(driverId) {
-  // 1) Shipments van deze driver
   const { data: shipments, error: shipErr } = await sb
     .from("shipments")
     .select("id, status, customer_name, created_at")
@@ -81,7 +86,6 @@ async function loadShipmentsWithEvents(driverId) {
   const ids = (shipments || []).map((s) => s.id);
   if (ids.length === 0) return [];
 
-  // 2) Events voor deze shipments
   const { data: events, error: evErr } = await sb
     .from("shipment_events")
     .select("id, shipment_id, event_type, note, created_at")
@@ -107,14 +111,13 @@ async function loadShipmentsWithEvents(driverId) {
    Status update + event insert
 ------------------------- */
 const STATUS_META = {
-  created: { label: "Aangemeld", noteDefault: "Zending aangemeld", noteRequired: false },
-  en_route: { label: "Onderweg", noteDefault: "Chauffeur is onderweg", noteRequired: false },
-  delivered: { label: "Afgeleverd", noteDefault: "Zending afgeleverd", noteRequired: false },
-  problem: { label: "Probleem", noteDefault: "Probleem gemeld", noteRequired: true },
+  created: { label: "Aangemeld", noteDefault: "Zending aangemeld" },
+  en_route: { label: "Onderweg", noteDefault: "Chauffeur is onderweg" },
+  delivered: { label: "Afgeleverd", noteDefault: "Zending afgeleverd" },
+  problem: { label: "Probleem", noteDefault: "Probleem gemeld" },
 };
 
 async function updateShipmentStatus(shipmentId, newStatus, note) {
-  // update shipments.status
   const { error: upErr } = await sb
     .from("shipments")
     .update({ status: newStatus })
@@ -122,7 +125,6 @@ async function updateShipmentStatus(shipmentId, newStatus, note) {
 
   if (upErr) throw upErr;
 
-  // insert shipment_events
   const { error: insErr } = await sb
     .from("shipment_events")
     .insert([
@@ -140,8 +142,6 @@ async function updateShipmentStatus(shipmentId, newStatus, note) {
    UI rendering
 ------------------------- */
 function badgeClass(status) {
-  // match jouw CSS classes uit driver/dashboard.html
-  // b-created / b-en_route / b-delivered / b-problem
   return `badge b-${status}`;
 }
 
@@ -167,7 +167,6 @@ function renderEvents(events) {
 }
 
 function renderActionButtons(shipment) {
-  // Buttons met data-status
   return `
     <div class="row" style="gap:10px; margin-top:12px; flex-wrap:wrap;">
       <button class="btn" data-action="status" data-status="created" data-ship="${shipment.id}">Aangemeld</button>
@@ -201,31 +200,50 @@ function renderShipmentCard(shipment) {
 }
 
 /* -------------------------
-   Status flow (A)
+   Status flow (A2)
+   - Confirm altijd
+   - Problem: note verplicht
+   - Delivered: ontvanger naam verplicht + extra notitie optioneel
 ------------------------- */
+function askRequired(promptText) {
+  const v = (window.prompt(promptText, "") || "").trim();
+  return v;
+}
+
 async function handleStatusClick(shipmentId, newStatus) {
-  const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "", noteRequired: false };
+  const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "" };
 
   // 1) Confirm
   const ok = window.confirm(`Status wijzigen naar: "${meta.label}"?`);
   if (!ok) return;
 
-  // 2) Note requirement
+  // 2) Note bouwen
   let note = meta.noteDefault || "";
 
   if (newStatus === "problem") {
-    note = window.prompt("Probleem omschrijving (verplicht):", "") || "";
-    note = note.trim();
-    if (!note) {
+    const problemText = askRequired("Probleem omschrijving (verplicht):");
+    if (!problemText) {
       alert("Probleem omschrijving is verplicht.");
       return;
     }
+    note = problemText;
   }
 
   if (newStatus === "delivered") {
-    const extra = window.prompt("Notitie bij afleveren (optioneel):", "") || "";
-    const t = extra.trim();
-    if (t) note = t;
+    // A2: Naam ontvanger verplicht
+    const receiver = askRequired("Naam ontvanger (verplicht):");
+    if (!receiver) {
+      alert("Naam ontvanger is verplicht.");
+      return;
+    }
+
+    // Extra notitie optioneel
+    const extra = (window.prompt("Extra notitie (optioneel):", "") || "").trim();
+
+    // Note formaat dat je later makkelijk kan parsen/tonen
+    note = extra
+      ? `Ontvangen door: ${receiver} — Notitie: ${extra}`
+      : `Ontvangen door: ${receiver}`;
   }
 
   // 3) Save
@@ -245,29 +263,17 @@ async function handleStatusClick(shipmentId, newStatus) {
 let realtimeChannel = null;
 
 function startRealtime(driverId) {
-  // 1 channel voor shipments + shipment_events
   realtimeChannel = sb
     .channel("dvk-driver-dashboard")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "shipments" },
-      (payload) => {
-        // Alleen refreshen als driver_id matcht (payload.new kan null bij DELETE)
-        const row = payload.new || payload.old;
-        if (row?.driver_id === driverId) {
-          refresh(driverId, { silent: true });
-        }
-      }
-    )
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "shipment_events" },
-      (payload) => {
-        // refresh als het event bij een shipment hoort die we mogelijk tonen
-        // (simpel: altijd refresh)
+    .on("postgres_changes", { event: "*", schema: "public", table: "shipments" }, (payload) => {
+      const row = payload.new || payload.old;
+      if (row?.driver_id === driverId) {
         refresh(driverId, { silent: true });
       }
-    )
+    })
+    .on("postgres_changes", { event: "*", schema: "public", table: "shipment_events" }, () => {
+      refresh(driverId, { silent: true });
+    })
     .subscribe();
 }
 
@@ -294,9 +300,11 @@ async function refresh(driverId, opts = {}) {
 document.addEventListener("click", async (ev) => {
   const btn = ev.target.closest("button[data-action='status']");
   if (!btn) return;
+
   const shipmentId = btn.getAttribute("data-ship");
   const newStatus = btn.getAttribute("data-status");
   if (!shipmentId || !newStatus) return;
+
   await handleStatusClick(shipmentId, newStatus);
 });
 
@@ -312,15 +320,11 @@ document.addEventListener("click", async (ev) => {
     const email = await loadDriverName(session);
     if (whoEl) whoEl.textContent = email;
 
-    if (logoutBtn) {
-      logoutBtn.addEventListener("click", signOut);
-    }
+    if (logoutBtn) logoutBtn.addEventListener("click", signOut);
 
     const driverId = session.user.id;
 
     await refresh(driverId);
-
-    // realtime aan
     startRealtime(driverId);
   } catch (e) {
     console.error(e);
