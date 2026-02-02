@@ -1,84 +1,200 @@
 <!DOCTYPE html>
 <html lang="nl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chauffeur dashboard | DVK</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chauffeur dashboard | DVK</title>
 
-  <!-- Jouw bestaande stylesheet -->
-  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
+    <!-- Jouw bestaande stylesheet -->
+    <link
+      rel="stylesheet"
+      href="/dvk-track-trace/public/css/styles.css"
+    />
 
-  <!-- Kleine extra styling voor tegels / events -->
-  <style>
-    .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; }
-    .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:rgba(255,255,255,.92); cursor:pointer; }
-    .grid { display:grid; gap:12px; margin-top:14px; }
-    .ship-card { border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; background:rgba(255,255,255,.03); }
-    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .muted { opacity:.7; font-size:13px; }
-    .badge { padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,.10); }
+    <!-- Extra styling voor cards/events (compact & netjes) -->
+    <style>
+      .topbar-right {
+        margin-left: auto;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .btn {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.92);
+        cursor: pointer;
+      }
+      .grid {
+        display: grid;
+        gap: 12px;
+        margin-top: 14px;
+      }
+      .ship-card {
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .muted {
+        opacity: 0.7;
+        font-size: 13px;
+      }
+      .ship-code {
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 2px;
+      }
 
-    .b-created { background:rgba(59,130,246,.18); }
-    .b-en_route { background:rgba(245,158,11,.18); }
-    .b-delivered { background:rgba(34,197,94,.18); }
-    .b-problem { background:rgba(239,68,68,.18); }
+      .badge {
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .b-created {
+        background: rgba(59, 130, 246, 0.18);
+      }
+      .b-en_route {
+        background: rgba(245, 158, 11, 0.18);
+      }
+      .b-delivered {
+        background: rgba(34, 197, 94, 0.18);
+      }
+      .b-problem {
+        background: rgba(239, 68, 68, 0.18);
+      }
 
-    .events { margin-top:10px; padding-left:18px; }
-    .events li { margin:6px 0; }
-    .sep { height:1px; background:rgba(255,255,255,.08); margin:12px 0; }
-  </style>
-</head>
+      .events {
+        margin-top: 10px;
+        padding-left: 6px;
+        display: grid;
+        gap: 10px;
+      }
+      .event-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .event-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        margin-top: 6px;
+        background: rgba(255, 255, 255, 0.35);
+        flex: 0 0 auto;
+      }
+      .event-title {
+        font-weight: 600;
+      }
+      .event-note {
+        margin-top: 2px;
+      }
+      .event-dt {
+        margin-top: 2px;
+      }
 
-<body>
-  <div class="container">
-    <div class="topbar">
-      <div class="brand">
-        <strong>De Vechtse Koeriers</strong>
-        <span>Chauffeursportaal</span>
+      /* Skeletons */
+      #skeletons {
+        display: none;
+      }
+      .ship-card.skeleton {
+        opacity: 0.8;
+      }
+      .sk-line {
+        height: 10px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 8px 0;
+      }
+      .w40 {
+        width: 40%;
+      }
+      .w60 {
+        width: 60%;
+      }
+      .w50 {
+        width: 50%;
+      }
+      .sk-chiprow {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .sk-chip {
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .w30 {
+        width: 30%;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="topbar">
+        <div class="brand">
+          <strong>De Vechtse Koeriers</strong>
+          <span>Chauffeursportaal</span>
+        </div>
+
+        <div class="topbar-right">
+          <span class="muted" id="whoami">...</span>
+          <button class="btn" id="logoutBtn">Uitloggen</button>
+        </div>
       </div>
 
-      <div class="topbar-right">
-        <span class="muted" id="whoami">...</span>
-        <button class="btn" id="logoutBtn">Uitloggen</button>
+      <div class="card" style="margin-top: 14px">
+        <h1 class="h1">Dashboard</h1>
+        <p class="small">Jouw zendingen + status-events</p>
+
+        <div class="sep"></div>
+
+        <div id="status" class="muted">Laden...</div>
+
+        <div id="list" class="grid"></div>
+
+        <!-- Skeleton loader -->
+        <div id="skeletons" class="grid" aria-hidden="true">
+          <div class="ship-card skeleton">
+            <div class="sk-line w40"></div>
+            <div class="sk-line w60"></div>
+            <div class="sk-line w50"></div>
+            <div class="sk-chiprow">
+              <div class="sk-chip w30"></div>
+              <div class="sk-chip w40"></div>
+            </div>
+          </div>
+
+          <div class="ship-card skeleton">
+            <div class="sk-line w40"></div>
+            <div class="sk-line w60"></div>
+            <div class="sk-line w50"></div>
+            <div class="sk-chiprow">
+              <div class="sk-chip w30"></div>
+              <div class="sk-chip w40"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px">
-      <h1 class="h1">Dashboard</h1>
-      <p class="small">Jouw zendingen + status-events</p>
+    <!-- Supabase library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-      <div class="sep"></div>
-
-      <div id="status" class="muted">Laden...</div>
-      <div id="list" class="grid"></div>
-
-      <div id="skeletons" class="grid" aria-hidden="true">
-  <div class="ship-card skeleton">
-    <div class="sk-line w40"></div>
-    <div class="sk-line w60"></div>
-    <div class="sk-line w50"></div>
-    <div class="sk-chiprow">
-      <div class="sk-chip w30"></div>
-      <div class="sk-chip w40"></div>
-    </div>
-  </div>
-
-  <div class="ship-card skeleton">
-    <div class="sk-line w40"></div>
-    <div class="sk-line w60"></div>
-    <div class="sk-line w50"></div>
-    <div class="sk-chiprow">
-      <div class="sk-chip w30"></div>
-      <div class="sk-chip w40"></div>
-    </div>
-  </div>
-</div>
-
-  <!-- Supabase library -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-  <!-- Let op: absolute paden i.v.m. GitHub Pages -->
-  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
-  <script src="/dvk-track-trace/public/js/dashboard.js"></script>
-</body>
+    <!-- Let op: absolute paden i.v.m. GitHub Pages -->
+    <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
+    <script src="/dvk-track-trace/public/js/dashboard.js"></script>
+  </body>
 </html>
