@@ -1,7 +1,7 @@
 /* ==========================================================
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
-   Stap A2: Afgeleverd -> naam ontvanger verplicht
+   Stap A2.1: Afgeleverd -> naam ontvanger + locatie verplicht
    ========================================================== */
 
 /* Supabase client (gezet in supabase-config.js) */
@@ -200,16 +200,36 @@ function renderShipmentCard(shipment) {
 }
 
 /* -------------------------
-   Status flow (A2)
-   - Confirm altijd
-   - Problem: note verplicht
-   - Delivered: ontvanger naam verplicht + extra notitie optioneel
+   Helpers voor prompts
 ------------------------- */
 function askRequired(promptText) {
-  const v = (window.prompt(promptText, "") || "").trim();
-  return v;
+  return (window.prompt(promptText, "") || "").trim();
 }
 
+function askDeliveredLocation() {
+  const options = [
+    { key: "1", value: "voordeur" },
+    { key: "2", value: "buren" },
+    { key: "3", value: "receptie" },
+    { key: "4", value: "pakketbox" },
+  ];
+
+  const text =
+    "Afleverlocatie (verplicht)\n" +
+    options.map((o) => `${o.key}) ${o.value}`).join("\n") +
+    "\n\nKies 1-4:";
+
+  const choice = (window.prompt(text, "") || "").trim();
+  const picked = options.find((o) => o.key === choice);
+  return picked ? picked.value : "";
+}
+
+/* -------------------------
+   Status flow (A2.1)
+   - Confirm altijd
+   - Problem: note verplicht
+   - Delivered: ontvanger verplicht + locatie verplicht + notitie optioneel
+------------------------- */
 async function handleStatusClick(shipmentId, newStatus) {
   const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "" };
 
@@ -230,20 +250,24 @@ async function handleStatusClick(shipmentId, newStatus) {
   }
 
   if (newStatus === "delivered") {
-    // A2: Naam ontvanger verplicht
     const receiver = askRequired("Naam ontvanger (verplicht):");
     if (!receiver) {
       alert("Naam ontvanger is verplicht.");
       return;
     }
 
-    // Extra notitie optioneel
+    const loc = askDeliveredLocation();
+    if (!loc) {
+      alert("Afleverlocatie is verplicht. Kies 1 t/m 4.");
+      return;
+    }
+
     const extra = (window.prompt("Extra notitie (optioneel):", "") || "").trim();
 
-    // Note formaat dat je later makkelijk kan parsen/tonen
+    // Note format (later makkelijk uit te lezen)
     note = extra
-      ? `Ontvangen door: ${receiver} — Notitie: ${extra}`
-      : `Ontvangen door: ${receiver}`;
+      ? `Ontvangen door: ${receiver} | Locatie: ${loc} | Notitie: ${extra}`
+      : `Ontvangen door: ${receiver} | Locatie: ${loc}`;
   }
 
   // 3) Save
