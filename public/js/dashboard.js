@@ -2,13 +2,15 @@
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
 
-   A2.2 (upgrade):
-   - Afgeleverd: ontvanger verplicht + locatie dropdown verplicht + bevestigen verplicht
-   - Alles in de kaart (geen prompt)
+   A2.4 Afgeleverd:
+   - Ontvanger verplicht
+   - Locatie dropdown verplicht
+   - Handtekening (tekst) verplicht
+   - Extra notitie optioneel
 
-   A2.3:
-   - Probleem: categorie dropdown verplicht + omschrijving verplicht
-   - Ook in de kaart
+   Probleem (A2.3) blijft:
+   - Categorie dropdown verplicht
+   - Omschrijving verplicht
 ========================================================== */
 
 const sb = window.supabaseClient;
@@ -100,7 +102,6 @@ async function loadShipmentsWithEvents(driverId) {
 }
 
 async function updateShipmentStatus(shipmentId, newStatus, note) {
-  // 1) update shipments.status
   const { error: upErr } = await sb
     .from("shipments")
     .update({ status: newStatus })
@@ -108,7 +109,6 @@ async function updateShipmentStatus(shipmentId, newStatus, note) {
 
   if (upErr) throw upErr;
 
-  // 2) insert shipment_events
   const { error: insErr } = await sb.from("shipment_events").insert([
     {
       shipment_id: shipmentId,
@@ -121,7 +121,7 @@ async function updateShipmentStatus(shipmentId, newStatus, note) {
 }
 
 /* -------------------------
-   UI state (welke panel is open)
+   UI state
 ------------------------- */
 const openPanel = new Map(); // shipmentId -> "delivered" | "problem" | null
 let currentDriverId = null;
@@ -132,8 +132,6 @@ let isSaving = false;
 ------------------------- */
 function renderEvents(events) {
   if (!events || events.length === 0) return `<div class="muted">Nog geen events</div>`;
-
-  // nieuwste boven
   const newestFirst = [...events].reverse();
 
   return `
@@ -156,6 +154,7 @@ function renderEvents(events) {
   `;
 }
 
+/* A2.4: delivered panel met echte dropdown + signature text */
 function renderDeliveredPanel(shipmentId, isOpen) {
   return `
     <div class="panel" data-panel="delivered" style="display:${isOpen ? "block" : "none"};">
@@ -173,19 +172,17 @@ function renderDeliveredPanel(shipmentId, isOpen) {
           <option value="receptie">Receptie</option>
           <option value="pakketbox">Pakketbox</option>
         </select>
-        <div class="help">Tip: dit komt in de event-notitie voor track & trace.</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Handtekening (verplicht)</div>
+        <input class="input" type="text" data-delivered-signature placeholder="Typ naam als handtekening (bijv. Jan Jansen)" />
+        <div class="help">Dit is een tekst-handtekening voor bewijs (later kunnen we dit vervangen door echte handtekening/foto).</div>
       </div>
 
       <div class="field">
         <div class="label">Extra notitie (optioneel)</div>
         <textarea class="textarea" data-delivered-note placeholder="Bijv. achter het huis, hond in tuin…"></textarea>
-      </div>
-
-      <div class="field">
-        <label class="row" style="gap:10px;">
-          <input type="checkbox" data-delivered-confirm />
-          <span class="muted">Ik bevestig dat de zending is afgeleverd</span>
-        </label>
       </div>
 
       <div class="panel-actions">
@@ -196,6 +193,7 @@ function renderDeliveredPanel(shipmentId, isOpen) {
   `;
 }
 
+/* A2.3: problem panel */
 function renderProblemPanel(shipmentId, isOpen) {
   return `
     <div class="panel" data-panel="problem" style="display:${isOpen ? "block" : "none"};">
@@ -305,6 +303,10 @@ function startRealtime(driverId) {
 /* -------------------------
    Actions
 ------------------------- */
+function getCard(shipmentId) {
+  return document.querySelector(`[data-ship-card="${shipmentId}"]`);
+}
+
 async function doQuickStatus(shipmentId, status) {
   if (isSaving) return;
   const ok = window.confirm(`Status wijzigen naar "${status}"?`);
@@ -330,10 +332,7 @@ async function doQuickStatus(shipmentId, status) {
   }
 }
 
-function getCard(shipmentId) {
-  return document.querySelector(`[data-ship-card="${shipmentId}"]`);
-}
-
+/* A2.4 save delivered */
 async function saveDelivered(shipmentId) {
   if (isSaving) return;
   const card = getCard(shipmentId);
@@ -341,25 +340,16 @@ async function saveDelivered(shipmentId) {
 
   const receiver = (card.querySelector("[data-delivered-receiver]")?.value || "").trim();
   const location = (card.querySelector("[data-delivered-location]")?.value || "").trim();
+  const signature = (card.querySelector("[data-delivered-signature]")?.value || "").trim();
   const extraNote = (card.querySelector("[data-delivered-note]")?.value || "").trim();
-  const confirm = !!card.querySelector("[data-delivered-confirm]")?.checked;
 
-  if (!receiver) {
-    alert("Naam ontvanger is verplicht.");
-    return;
-  }
-  if (!location) {
-    alert("Afleverlocatie is verplicht.");
-    return;
-  }
-  if (!confirm) {
-    alert("Bevestiging is verplicht.");
-    return;
-  }
+  if (!receiver) return alert("Naam ontvanger is verplicht.");
+  if (!location) return alert("Afleverlocatie is verplicht.");
+  if (!signature) return alert("Handtekening (tekst) is verplicht.");
 
   const note = extraNote
-    ? `Ontvangen door: ${receiver} | Locatie: ${location} | Bevestigd: ja | Notitie: ${extraNote}`
-    : `Ontvangen door: ${receiver} | Locatie: ${location} | Bevestigd: ja`;
+    ? `Ontvangen door: ${receiver} | Locatie: ${location} | Handtekening: ${signature} | Notitie: ${extraNote}`
+    : `Ontvangen door: ${receiver} | Locatie: ${location} | Handtekening: ${signature}`;
 
   isSaving = true;
   setStatus("Opslaan (Afgeleverd)...");
@@ -376,6 +366,7 @@ async function saveDelivered(shipmentId) {
   }
 }
 
+/* A2.3 save problem */
 async function saveProblem(shipmentId) {
   if (isSaving) return;
   const card = getCard(shipmentId);
@@ -384,14 +375,8 @@ async function saveProblem(shipmentId) {
   const category = (card.querySelector("[data-problem-category]")?.value || "").trim();
   const noteText = (card.querySelector("[data-problem-note]")?.value || "").trim();
 
-  if (!category) {
-    alert("Probleem categorie is verplicht.");
-    return;
-  }
-  if (!noteText) {
-    alert("Omschrijving is verplicht.");
-    return;
-  }
+  if (!category) return alert("Probleem categorie is verplicht.");
+  if (!noteText) return alert("Omschrijving is verplicht.");
 
   const note = `Categorie: ${category} | Omschrijving: ${noteText}`;
 
@@ -411,7 +396,7 @@ async function saveProblem(shipmentId) {
 }
 
 /* -------------------------
-   Event delegation
+   Delegation
 ------------------------- */
 document.addEventListener("click", async (ev) => {
   const el = ev.target.closest("[data-action]");
@@ -461,7 +446,6 @@ document.addEventListener("click", async (ev) => {
     currentDriverId = session.user.id;
 
     if (whoEl) whoEl.textContent = session?.user?.email || "Ingelogd";
-
     if (logoutBtn) logoutBtn.addEventListener("click", signOut);
 
     await refresh({ silent: false });
