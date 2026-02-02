@@ -5,10 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chauffeur dashboard | DVK</title>
 
-  <!-- Jouw bestaande stylesheet -->
-  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
+  <!-- Zorgt dat ALLE paden vanaf /dvk-track-trace/ werken op GitHub Pages -->
+  <base href="/dvk-track-trace/">
 
-  <!-- Kleine extra styling voor cards/events (mag blijven) -->
+  <!-- Jouw bestaande stylesheet -->
+  <link rel="stylesheet" href="public/css/style.css" />
+
+  <!-- Extra styling voor tegels/events -->
   <style>
     .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; }
     .btn { padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.06); color:rgba(255,255,255,.92); cursor:pointer; }
@@ -60,10 +63,8 @@
 
       <div id="status" class="muted">Laden...</div>
 
-      <!-- echte lijst -->
       <div id="list" class="grid"></div>
 
-      <!-- skeletons -->
       <div id="skeletons" class="grid" aria-hidden="true">
         <div class="ship-card skeleton">
           <div class="sk-line w40"></div>
@@ -87,13 +88,13 @@
     </div>
   </div>
 
-  <!-- Supabase library -->
+  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Supabase config (maakt window.supabaseClient) -->
-  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
+  <!-- Config maakt window.supabaseClient -->
+  <script src="public/js/supabase-config.js"></script>
 
   <!-- Dashboard logic -->
-  <script src="/dvk-track-trace/public/js/dashboard.js"></script>
+  <script src="public/js/dashboard.js"></script>
 </body>
 </html>
