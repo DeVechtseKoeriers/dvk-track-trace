@@ -233,12 +233,13 @@ async function init() {
     if (!shipments || shipments.length === 0) {
       StatusEl.textContent = "Geen zendingen gevonden.";
       return;
+    } 
      
     renderShipments(shipments);
   } catch (err) {
     console.error(err);
-    hideSkeletons(); //
-    statusEl.textContent = "Fout bij laden: " + (err?.message || String(err));
+    hideSkeletons();
+    statusEl.textContent = "Fout bij laden: " + (err?.message || err);
   }
 }
 
