@@ -14,6 +14,19 @@ const whoEl = document.getElementById("whoami");
 const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
+function showSkeletons() {
+  const sk = document.getElementById("skeletons");
+  const list = document.getElementById("list");
+  if (sk) sk.style.display = "grid";
+  if (list) list.style.display = "none";
+}
+
+function hideSkeletons() {
+  const sk = document.getElementById("skeletons");
+  const list = document.getElementById("list");
+  if (sk) sk.style.display = "none";
+  if (list) list.style.display = "grid";
+}
 
 // ---------- helpers ----------
 function esc(s) {
@@ -187,6 +200,8 @@ function wireCardActions() {
 
 // ---------- main ----------
 async function init() {
+  showSkeletons();
+   
   try {
     if (!sb) {
       statusEl.textContent = "Supabase client ontbreekt (supabase-config.js).";
@@ -212,9 +227,17 @@ async function init() {
     // Eerste load
     statusEl.textContent = "Zendingen + events ophalen...";
     const shipments = await loadShipmentsWithEvents(userId);
+     
+    hideSkeletons();
+
+    if (!shipments || shipments.length === 0) {
+      StatusEl.textContent = "Geen zendingen gevonden.";
+      return;
+     
     renderShipments(shipments);
   } catch (err) {
     console.error(err);
+    hideSkeletons(); //
     statusEl.textContent = "Fout bij laden: " + (err?.message || String(err));
   }
 }
