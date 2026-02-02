@@ -1,7 +1,7 @@
 /* ==========================================================
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
-   Stap A2.1: Afgeleverd -> naam ontvanger + locatie verplicht
+   Stap A2.2: Afgeleverd -> ontvanger + locatie + bevestiging verplicht
    ========================================================== */
 
 /* Supabase client (gezet in supabase-config.js) */
@@ -224,11 +224,20 @@ function askDeliveredLocation() {
   return picked ? picked.value : "";
 }
 
+function askDeliveryConfirmation() {
+  const msg =
+    "Bevestiging (verplicht)\n\n" +
+    "Typ EXACT: IK BEVESTIG\n" +
+    "Daarmee bevestig je dat de zending is afgeleverd.";
+  const typed = (window.prompt(msg, "") || "").trim().toUpperCase();
+  return typed === "IK BEVESTIG";
+}
+
 /* -------------------------
-   Status flow (A2.1)
+   Status flow (A2.2)
    - Confirm altijd
    - Problem: note verplicht
-   - Delivered: ontvanger verplicht + locatie verplicht + notitie optioneel
+   - Delivered: ontvanger verplicht + locatie verplicht + bevestiging verplicht
 ------------------------- */
 async function handleStatusClick(shipmentId, newStatus) {
   const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "" };
@@ -262,12 +271,17 @@ async function handleStatusClick(shipmentId, newStatus) {
       return;
     }
 
+    const confirmed = askDeliveryConfirmation();
+    if (!confirmed) {
+      alert("Bevestiging mislukt. Typ exact: IK BEVESTIG");
+      return;
+    }
+
     const extra = (window.prompt("Extra notitie (optioneel):", "") || "").trim();
 
-    // Note format (later makkelijk uit te lezen)
     note = extra
-      ? `Ontvangen door: ${receiver} | Locatie: ${loc} | Notitie: ${extra}`
-      : `Ontvangen door: ${receiver} | Locatie: ${loc}`;
+      ? `Ontvangen door: ${receiver} | Locatie: ${loc} | Bevestigd: ja | Notitie: ${extra}`
+      : `Ontvangen door: ${receiver} | Locatie: ${loc} | Bevestigd: ja`;
   }
 
   // 3) Save
