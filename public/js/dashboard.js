@@ -1,10 +1,6 @@
 /* ============================================================
    DVK – Chauffeursdashboard
    Bestand: dvk-track-trace/public/js/dashboard.js
-
-   Vereisten in HTML:
-   - #whoami, #logoutBtn, #status, #list, #skeletons (optioneel)
-   - supabase-config.js zet window.supabaseClient
 ============================================================ */
 
 const sb = window.supabaseClient;
@@ -57,6 +53,21 @@ function badgeClass(status) {
   return "badge";
 }
 
+// Kies automatisch een “code” veld dat wél bestaat
+function pickShipmentCode(sh) {
+  // probeer veelvoorkomende namen
+  return (
+    sh?._code ??
+    sh?.code ??
+    sh?.reference ??
+    sh?.tracking_code ??
+    sh?.tracking ??
+    sh?.shipment_code ??
+    sh?.id ??
+    ""
+  );
+}
+
 // ---------- Auth ----------
 async function requireSession() {
   const { data, error } = await sb.auth.getSession();
@@ -71,10 +82,10 @@ async function requireSession() {
 
 // ---------- Data loaders ----------
 async function loadShipmentsForDriver(driverId) {
-  // Let op: jouw tabel heeft _code (niet reference) en driver_id (niet user_id)
+  // BELANGRIJK: select("*") zodat we niet crashen op kolomnamen
   const { data, error } = await sb
     .from("shipments")
-    .select("id,_code,status,customer_name,created_at,driver_id")
+    .select("*")
     .eq("driver_id", driverId)
     .order("created_at", { ascending: false });
 
@@ -85,7 +96,6 @@ async function loadShipmentsForDriver(driverId) {
 async function loadEventsForShipmentIds(shipmentIds) {
   if (!shipmentIds.length) return [];
 
-  // Haal alle events op in 1 query (geen relationship nodig)
   const { data, error } = await sb
     .from("shipment_events")
     .select("id,shipment_id,event_type,note,created_at")
@@ -120,13 +130,13 @@ function renderShipments(shipments, eventsByShipment) {
 
   const html = shipments
     .map((s) => {
-      const code = s._code ?? "";
-      const customer = s.customer_name ?? "";
+      const code = pickShipmentCode(s);
+      const customer = s.customer_name ?? s.customer ?? "";
       const st = s.status ?? "";
       const createdAt = s.created_at;
 
       const events = eventsByShipment.get(s.id) || [];
-      const topEvents = events.slice(0, 5); // max 5 tonen
+      const topEvents = events.slice(0, 5);
 
       const eventsHtml =
         topEvents.length === 0
@@ -186,10 +196,8 @@ async function init() {
     const session = await requireSession();
     if (!session) return;
 
-    // Whoami rechtsboven
     if (whoEl) whoEl.textContent = session.user?.email || "Ingelogd";
 
-    // Logout
     logoutBtn?.addEventListener("click", async () => {
       await sb.auth.signOut();
       window.location.href = "/dvk-track-trace/driver/login.html";
