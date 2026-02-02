@@ -1,29 +1,22 @@
 /* ==========================================================
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
-   Stap A2.2: Afgeleverd -> ontvanger + locatie + bevestiging verplicht
-   ========================================================== */
 
-/* Supabase client (gezet in supabase-config.js) */
+   A2.2 (upgrade):
+   - Afgeleverd: ontvanger verplicht + locatie dropdown verplicht + bevestigen verplicht
+   - Alles in de kaart (geen prompt)
+
+   A2.3:
+   - Probleem: categorie dropdown verplicht + omschrijving verplicht
+   - Ook in de kaart
+========================================================== */
+
 const sb = window.supabaseClient;
 
-/* DOM elements */
 const whoEl = document.getElementById("whoami");
 const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
-
-/* Skeleton helpers */
-function showSkeletons() {
-  const sk = document.getElementById("skeletons");
-  if (sk) sk.style.display = "grid";
-  if (listEl) listEl.style.display = "none";
-}
-function hideSkeletons() {
-  const sk = document.getElementById("skeletons");
-  if (sk) sk.style.display = "none";
-  if (listEl) listEl.style.display = "grid";
-}
 
 function setStatus(msg, isError = false) {
   if (!statusEl) return;
@@ -44,12 +37,15 @@ function fmtDT(iso) {
 }
 
 function shortId(id) {
-  if (!id) return "";
-  return String(id).slice(0, 8);
+  return String(id || "").slice(0, 8);
+}
+
+function badgeClass(status) {
+  return `badge b-${String(status || "").toLowerCase()}`;
 }
 
 /* -------------------------
-   Auth helpers
+   Auth
 ------------------------- */
 async function requireSession() {
   const { data, error } = await sb.auth.getSession();
@@ -62,17 +58,13 @@ async function requireSession() {
   return session;
 }
 
-async function loadDriverName(session) {
-  return session?.user?.email || "Ingelogd";
-}
-
 async function signOut() {
   await sb.auth.signOut();
   window.location.href = "/dvk-track-trace/driver/index.html";
 }
 
 /* -------------------------
-   Data ophalen
+   Data
 ------------------------- */
 async function loadShipmentsWithEvents(driverId) {
   const { data: shipments, error: shipErr } = await sb
@@ -107,17 +99,8 @@ async function loadShipmentsWithEvents(driverId) {
   }));
 }
 
-/* -------------------------
-   Status update + event insert
-------------------------- */
-const STATUS_META = {
-  created: { label: "Aangemeld", noteDefault: "Zending aangemeld" },
-  en_route: { label: "Onderweg", noteDefault: "Chauffeur is onderweg" },
-  delivered: { label: "Afgeleverd", noteDefault: "Zending afgeleverd" },
-  problem: { label: "Probleem", noteDefault: "Probleem gemeld" },
-};
-
 async function updateShipmentStatus(shipmentId, newStatus, note) {
+  // 1) update shipments.status
   const { error: upErr } = await sb
     .from("shipments")
     .update({ status: newStatus })
@@ -125,31 +108,38 @@ async function updateShipmentStatus(shipmentId, newStatus, note) {
 
   if (upErr) throw upErr;
 
-  const { error: insErr } = await sb
-    .from("shipment_events")
-    .insert([
-      {
-        shipment_id: shipmentId,
-        event_type: newStatus,
-        note: note || STATUS_META[newStatus]?.noteDefault || "",
-      },
-    ]);
+  // 2) insert shipment_events
+  const { error: insErr } = await sb.from("shipment_events").insert([
+    {
+      shipment_id: shipmentId,
+      event_type: newStatus,
+      note: note || null,
+    },
+  ]);
 
   if (insErr) throw insErr;
 }
 
 /* -------------------------
-   UI rendering
+   UI state (welke panel is open)
 ------------------------- */
-function badgeClass(status) {
-  return `badge b-${status}`;
-}
+const openPanel = new Map(); // shipmentId -> "delivered" | "problem" | null
+let currentDriverId = null;
+let isSaving = false;
 
+/* -------------------------
+   Render
+------------------------- */
 function renderEvents(events) {
   if (!events || events.length === 0) return `<div class="muted">Nog geen events</div>`;
+
+  // nieuwste boven
+  const newestFirst = [...events].reverse();
+
   return `
     <div class="events">
-      ${events
+      ${newestFirst
+        .slice(0, 6)
         .map(
           (e) => `
         <div class="row" style="justify-content:space-between; gap:14px;">
@@ -166,21 +156,101 @@ function renderEvents(events) {
   `;
 }
 
+function renderDeliveredPanel(shipmentId, isOpen) {
+  return `
+    <div class="panel" data-panel="delivered" style="display:${isOpen ? "block" : "none"};">
+      <div class="field">
+        <div class="label">Naam ontvanger (verplicht)</div>
+        <input class="input" type="text" data-delivered-receiver placeholder="Bijv. J. Jansen" />
+      </div>
+
+      <div class="field">
+        <div class="label">Afleverlocatie (verplicht)</div>
+        <select class="select" data-delivered-location>
+          <option value="">Kies locatie…</option>
+          <option value="voordeur">Voordeur</option>
+          <option value="buren">Buren</option>
+          <option value="receptie">Receptie</option>
+          <option value="pakketbox">Pakketbox</option>
+        </select>
+        <div class="help">Tip: dit komt in de event-notitie voor track & trace.</div>
+      </div>
+
+      <div class="field">
+        <div class="label">Extra notitie (optioneel)</div>
+        <textarea class="textarea" data-delivered-note placeholder="Bijv. achter het huis, hond in tuin…"></textarea>
+      </div>
+
+      <div class="field">
+        <label class="row" style="gap:10px;">
+          <input type="checkbox" data-delivered-confirm />
+          <span class="muted">Ik bevestig dat de zending is afgeleverd</span>
+        </label>
+      </div>
+
+      <div class="panel-actions">
+        <button class="btn ok" data-action="saveDelivered" data-ship="${shipmentId}">Opslaan (Afgeleverd)</button>
+        <button class="btn secondary" data-action="cancelPanel" data-ship="${shipmentId}">Annuleren</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderProblemPanel(shipmentId, isOpen) {
+  return `
+    <div class="panel" data-panel="problem" style="display:${isOpen ? "block" : "none"};">
+      <div class="field">
+        <div class="label">Probleem categorie (verplicht)</div>
+        <select class="select" data-problem-category>
+          <option value="">Kies categorie…</option>
+          <option value="customer_not_home">Klant niet thuis</option>
+          <option value="wrong_address">Verkeerd adres</option>
+          <option value="damaged">Schade</option>
+          <option value="access_blocked">Toegang geblokkeerd</option>
+          <option value="other">Anders</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <div class="label">Omschrijving (verplicht)</div>
+        <textarea class="textarea" data-problem-note placeholder="Omschrijf wat er aan de hand is…"></textarea>
+      </div>
+
+      <div class="panel-actions">
+        <button class="btn bad" data-action="saveProblem" data-ship="${shipmentId}">Opslaan (Probleem)</button>
+        <button class="btn secondary" data-action="cancelPanel" data-ship="${shipmentId}">Annuleren</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderActionButtons(shipment) {
+  const sid = shipment.id;
+  const open = openPanel.get(sid) || null;
+
   return `
     <div class="row" style="gap:10px; margin-top:12px; flex-wrap:wrap;">
-      <button class="btn" data-action="status" data-status="created" data-ship="${shipment.id}">Aangemeld</button>
-      <button class="btn" data-action="status" data-status="en_route" data-ship="${shipment.id}">Onderweg</button>
-      <button class="btn" data-action="status" data-status="delivered" data-ship="${shipment.id}">Afgeleverd</button>
-      <button class="btn" data-action="status" data-status="problem" data-ship="${shipment.id}">Probleem</button>
+      <button class="btn" data-action="quickStatus" data-status="created" data-ship="${sid}">Aangemeld</button>
+      <button class="btn" data-action="quickStatus" data-status="en_route" data-ship="${sid}">Onderweg</button>
+
+      <button class="btn ok" data-action="openPanel" data-panel="delivered" data-ship="${sid}">
+        Afgeleverd…
+      </button>
+      <button class="btn bad" data-action="openPanel" data-panel="problem" data-ship="${sid}">
+        Probleem…
+      </button>
     </div>
+
+    ${renderDeliveredPanel(sid, open === "delivered")}
+    ${renderProblemPanel(sid, open === "problem")}
   `;
 }
 
 function renderShipmentCard(shipment) {
   const status = shipment.status || "";
+
   return `
-    <div class="ship-card">
+    <div class="ship-card" data-ship-card="${shipment.id}">
       <div class="row" style="justify-content:space-between; align-items:flex-start;">
         <div>
           <div style="font-weight:800; font-size:18px;">#${shortId(shipment.id)}</div>
@@ -200,103 +270,22 @@ function renderShipmentCard(shipment) {
 }
 
 /* -------------------------
-   Helpers voor prompts
+   Refresh
 ------------------------- */
-function askRequired(promptText) {
-  return (window.prompt(promptText, "") || "").trim();
-}
-
-function askDeliveredLocation() {
-  const options = [
-    { key: "1", value: "voordeur" },
-    { key: "2", value: "buren" },
-    { key: "3", value: "receptie" },
-    { key: "4", value: "pakketbox" },
-  ];
-
-  const text =
-    "Afleverlocatie (verplicht)\n" +
-    options.map((o) => `${o.key}) ${o.value}`).join("\n") +
-    "\n\nKies 1-4:";
-
-  const choice = (window.prompt(text, "") || "").trim();
-  const picked = options.find((o) => o.key === choice);
-  return picked ? picked.value : "";
-}
-
-function askDeliveryConfirmation() {
-  const msg =
-    "Bevestiging (verplicht)\n\n" +
-    "Typ EXACT: IK BEVESTIG\n" +
-    "Daarmee bevestig je dat de zending is afgeleverd.";
-  const typed = (window.prompt(msg, "") || "").trim().toUpperCase();
-  return typed === "IK BEVESTIG";
-}
-
-/* -------------------------
-   Status flow (A2.2)
-   - Confirm altijd
-   - Problem: note verplicht
-   - Delivered: ontvanger verplicht + locatie verplicht + bevestiging verplicht
-------------------------- */
-async function handleStatusClick(shipmentId, newStatus) {
-  const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "" };
-
-  // 1) Confirm
-  const ok = window.confirm(`Status wijzigen naar: "${meta.label}"?`);
-  if (!ok) return;
-
-  // 2) Note bouwen
-  let note = meta.noteDefault || "";
-
-  if (newStatus === "problem") {
-    const problemText = askRequired("Probleem omschrijving (verplicht):");
-    if (!problemText) {
-      alert("Probleem omschrijving is verplicht.");
-      return;
-    }
-    note = problemText;
-  }
-
-  if (newStatus === "delivered") {
-    const receiver = askRequired("Naam ontvanger (verplicht):");
-    if (!receiver) {
-      alert("Naam ontvanger is verplicht.");
-      return;
-    }
-
-    const loc = askDeliveredLocation();
-    if (!loc) {
-      alert("Afleverlocatie is verplicht. Kies 1 t/m 4.");
-      return;
-    }
-
-    const confirmed = askDeliveryConfirmation();
-    if (!confirmed) {
-      alert("Bevestiging mislukt. Typ exact: IK BEVESTIG");
-      return;
-    }
-
-    const extra = (window.prompt("Extra notitie (optioneel):", "") || "").trim();
-
-    note = extra
-      ? `Ontvangen door: ${receiver} | Locatie: ${loc} | Bevestigd: ja | Notitie: ${extra}`
-      : `Ontvangen door: ${receiver} | Locatie: ${loc} | Bevestigd: ja`;
-  }
-
-  // 3) Save
-  setStatus("Status bijwerken...");
+async function refresh(opts = { silent: false }) {
+  if (!opts.silent) setStatus("Laden...");
   try {
-    await updateShipmentStatus(shipmentId, newStatus, note);
-    setStatus("Status bijgewerkt ✅");
+    const rows = await loadShipmentsWithEvents(currentDriverId);
+    if (listEl) listEl.innerHTML = rows.map(renderShipmentCard).join("");
+    setStatus(`${rows.length} zending(en) geladen.`);
   } catch (e) {
     console.error(e);
-    setStatus("Fout bij status update: " + (e?.message || e), true);
+    setStatus("Fout bij laden: " + (e?.message || e), true);
   }
 }
 
 /* -------------------------
-   Realtime subscriptions
+   Realtime
 ------------------------- */
 let realtimeChannel = null;
 
@@ -305,30 +294,119 @@ function startRealtime(driverId) {
     .channel("dvk-driver-dashboard")
     .on("postgres_changes", { event: "*", schema: "public", table: "shipments" }, (payload) => {
       const row = payload.new || payload.old;
-      if (row?.driver_id === driverId) {
-        refresh(driverId, { silent: true });
-      }
+      if (row?.driver_id === driverId) refresh({ silent: true });
     })
     .on("postgres_changes", { event: "*", schema: "public", table: "shipment_events" }, () => {
-      refresh(driverId, { silent: true });
+      refresh({ silent: true });
     })
     .subscribe();
 }
 
 /* -------------------------
-   Main refresh
+   Actions
 ------------------------- */
-async function refresh(driverId, opts = {}) {
-  if (!opts.silent) showSkeletons();
+async function doQuickStatus(shipmentId, status) {
+  if (isSaving) return;
+  const ok = window.confirm(`Status wijzigen naar "${status}"?`);
+  if (!ok) return;
+
+  const defaults = {
+    created: "Zending aangemeld",
+    en_route: "Chauffeur is onderweg",
+  };
+
+  isSaving = true;
+  setStatus("Opslaan...");
   try {
-    const rows = await loadShipmentsWithEvents(driverId);
-    if (listEl) listEl.innerHTML = rows.map(renderShipmentCard).join("");
-    setStatus(`${rows.length} zending(en) geladen.`);
+    await updateShipmentStatus(shipmentId, status, defaults[status] || null);
+    setStatus("Opgeslagen ✅");
+    openPanel.set(shipmentId, null);
+    await refresh({ silent: true });
   } catch (e) {
     console.error(e);
-    setStatus("Fout bij laden: " + (e?.message || e), true);
+    setStatus("Fout: " + (e?.message || e), true);
   } finally {
-    hideSkeletons();
+    isSaving = false;
+  }
+}
+
+function getCard(shipmentId) {
+  return document.querySelector(`[data-ship-card="${shipmentId}"]`);
+}
+
+async function saveDelivered(shipmentId) {
+  if (isSaving) return;
+  const card = getCard(shipmentId);
+  if (!card) return;
+
+  const receiver = (card.querySelector("[data-delivered-receiver]")?.value || "").trim();
+  const location = (card.querySelector("[data-delivered-location]")?.value || "").trim();
+  const extraNote = (card.querySelector("[data-delivered-note]")?.value || "").trim();
+  const confirm = !!card.querySelector("[data-delivered-confirm]")?.checked;
+
+  if (!receiver) {
+    alert("Naam ontvanger is verplicht.");
+    return;
+  }
+  if (!location) {
+    alert("Afleverlocatie is verplicht.");
+    return;
+  }
+  if (!confirm) {
+    alert("Bevestiging is verplicht.");
+    return;
+  }
+
+  const note = extraNote
+    ? `Ontvangen door: ${receiver} | Locatie: ${location} | Bevestigd: ja | Notitie: ${extraNote}`
+    : `Ontvangen door: ${receiver} | Locatie: ${location} | Bevestigd: ja`;
+
+  isSaving = true;
+  setStatus("Opslaan (Afgeleverd)...");
+  try {
+    await updateShipmentStatus(shipmentId, "delivered", note);
+    setStatus("Afgeleverd opgeslagen ✅");
+    openPanel.set(shipmentId, null);
+    await refresh({ silent: true });
+  } catch (e) {
+    console.error(e);
+    setStatus("Fout: " + (e?.message || e), true);
+  } finally {
+    isSaving = false;
+  }
+}
+
+async function saveProblem(shipmentId) {
+  if (isSaving) return;
+  const card = getCard(shipmentId);
+  if (!card) return;
+
+  const category = (card.querySelector("[data-problem-category]")?.value || "").trim();
+  const noteText = (card.querySelector("[data-problem-note]")?.value || "").trim();
+
+  if (!category) {
+    alert("Probleem categorie is verplicht.");
+    return;
+  }
+  if (!noteText) {
+    alert("Omschrijving is verplicht.");
+    return;
+  }
+
+  const note = `Categorie: ${category} | Omschrijving: ${noteText}`;
+
+  isSaving = true;
+  setStatus("Opslaan (Probleem)...");
+  try {
+    await updateShipmentStatus(shipmentId, "problem", note);
+    setStatus("Probleem opgeslagen ✅");
+    openPanel.set(shipmentId, null);
+    await refresh({ silent: true });
+  } catch (e) {
+    console.error(e);
+    setStatus("Fout: " + (e?.message || e), true);
+  } finally {
+    isSaving = false;
   }
 }
 
@@ -336,14 +414,40 @@ async function refresh(driverId, opts = {}) {
    Event delegation
 ------------------------- */
 document.addEventListener("click", async (ev) => {
-  const btn = ev.target.closest("button[data-action='status']");
-  if (!btn) return;
+  const el = ev.target.closest("[data-action]");
+  if (!el) return;
 
-  const shipmentId = btn.getAttribute("data-ship");
-  const newStatus = btn.getAttribute("data-status");
-  if (!shipmentId || !newStatus) return;
+  const action = el.getAttribute("data-action");
+  const shipmentId = el.getAttribute("data-ship");
 
-  await handleStatusClick(shipmentId, newStatus);
+  if (action === "openPanel") {
+    const panel = el.getAttribute("data-panel");
+    openPanel.set(shipmentId, panel);
+    await refresh({ silent: true });
+    return;
+  }
+
+  if (action === "cancelPanel") {
+    openPanel.set(shipmentId, null);
+    await refresh({ silent: true });
+    return;
+  }
+
+  if (action === "quickStatus") {
+    const status = el.getAttribute("data-status");
+    await doQuickStatus(shipmentId, status);
+    return;
+  }
+
+  if (action === "saveDelivered") {
+    await saveDelivered(shipmentId);
+    return;
+  }
+
+  if (action === "saveProblem") {
+    await saveProblem(shipmentId);
+    return;
+  }
 });
 
 /* -------------------------
@@ -351,22 +455,19 @@ document.addEventListener("click", async (ev) => {
 ------------------------- */
 (async function init() {
   try {
-    showSkeletons();
     const session = await requireSession();
     if (!session) return;
 
-    const email = await loadDriverName(session);
-    if (whoEl) whoEl.textContent = email;
+    currentDriverId = session.user.id;
+
+    if (whoEl) whoEl.textContent = session?.user?.email || "Ingelogd";
 
     if (logoutBtn) logoutBtn.addEventListener("click", signOut);
 
-    const driverId = session.user.id;
-
-    await refresh(driverId);
-    startRealtime(driverId);
+    await refresh({ silent: false });
+    startRealtime(currentDriverId);
   } catch (e) {
     console.error(e);
     setStatus("Init fout: " + (e?.message || e), true);
-    hideSkeletons();
   }
 })();
