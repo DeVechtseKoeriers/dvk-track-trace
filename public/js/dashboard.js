@@ -1,34 +1,29 @@
-/* dvk-track-trace/public/js/dashboard.js
-   Driver dashboard (shipments + status-events)
-   Vereist:
-   - <span id="whoami"></span>
-   - <button id="logoutBtn"></button>
-   - <div id="status"></div>
-   - <div id="list"></div>
-   - supabase-config.js zet window.supabaseClient
-*/
+/* dvk-track-trace / public / js / dashboard.js */
+
+/* global window, document */
 
 const sb = window.supabaseClient;
 
+// DOM refs
 const whoEl = document.getElementById("whoami");
 const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
+
+// ---------------- Skeleton helpers ----------------
 function showSkeletons() {
   const sk = document.getElementById("skeletons");
-  const list = document.getElementById("list");
   if (sk) sk.style.display = "grid";
-  if (list) list.style.display = "none";
+  if (listEl) listEl.style.display = "none";
 }
 
 function hideSkeletons() {
   const sk = document.getElementById("skeletons");
-  const list = document.getElementById("list");
   if (sk) sk.style.display = "none";
-  if (list) list.style.display = "grid";
+  if (listEl) listEl.style.display = "grid";
 }
 
-// ---------- helpers ----------
+// ---------------- Helpers ----------------
 function esc(s) {
   return String(s ?? "")
     .replaceAll("&", "&amp;")
@@ -41,200 +36,117 @@ function esc(s) {
 function fmtDT(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  // NL weergave
-  return d.toLocaleString("nl-NL", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("nl-NL", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function badgeClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "created") return "b-created";
-  if (s === "en_route") return "b-en_route";
-  if (s === "delivered") return "b-delivered";
-  if (s === "problem") return "b-problem";
-  return "b-created";
-}
-
-function prettyStatus(status) {
-  const s = String(status || "");
-  if (s === "created") return "Aangemeld";
-  if (s === "en_route") return "Onderweg";
-  if (s === "delivered") return "Afgeleverd";
-  if (s === "problem") return "Probleem";
-  return s || "-";
-}
-
-// ---------- data ----------
+// ---------------- Auth ----------------
 async function requireSession() {
-  const { data, error } = await sb.auth.getSession();
-  if (error) throw error;
-
-  const session = data?.session;
-  if (!session) {
+  const { data } = await sb.auth.getSession();
+  if (!data?.session) {
     window.location.href = "/dvk-track-trace/driver/login.html";
     return null;
   }
-  return session;
+  return data.session;
 }
 
-async function loadDriverName(userId) {
-  // drivers tabel: user_id -> name
-  const { data, error } = await sb
-    .from("drivers")
-    .select("name")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    console.warn("loadDriverName error:", error);
-    return null;
-  }
-  return data?.name || null;
-}
-
+// ---------------- Data ----------------
 async function loadShipmentsWithEvents(userId) {
-  // NESTED query: shipments + shipment_events
-  // Let op: backticks staan hier GOED gesloten.
   const { data, error } = await sb
     .from("shipments")
     .select(`
       id,
-      track_code,
+      reference,
       status,
-      customer_name,
       created_at,
-      shipment_events (
+      events (
         id,
-        event_type,
-        note,
-        created_at
+        type,
+        created_at,
+        description
       )
     `)
     .eq("driver_id", userId)
-    .order("created_at", { ascending: false })
-    .order("created_at", { ascending: false, foreignTable: "shipment_events" });
+    .order("created_at", { ascending: false });
 
   if (error) throw error;
-
-  // Normaliseer events: altijd array en sorteren newest->oldest
-  return (data || []).map((s) => {
-    const ev = Array.isArray(s.shipment_events) ? s.shipment_events : [];
-    ev.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    return { ...s, shipment_events: ev };
-  });
+  return data ?? [];
 }
 
-// ---------- render ----------
+// ---------------- Render ----------------
 function renderShipments(shipments) {
   listEl.innerHTML = "";
 
-  statusEl.textContent = `Gevonden: ${shipments.length} zending(en).`;
-
-  if (!shipments.length) {
-    listEl.innerHTML = `<div class="muted">Geen zendingen gevonden.</div>`;
-    return;
-  }
-
   shipments.forEach((s) => {
-    const status = prettyStatus(s.status);
-    const badge = badgeClass(s.status);
-
-    const events = Array.isArray(s.shipment_events) ? s.shipment_events : [];
-    const eventsHtml = events.length
-      ? `<ul class="events">
-          ${events
-            .map(
-              (e) => `
-            <li>
-              <span class="badge ${badgeClass(e.event_type)}">${esc(e.event_type)}</span>
-              <span class="muted">${fmtDT(e.created_at)}</span>
-              <div>${esc(e.note || "")}</div>
-            </li>`
-            )
-            .join("")}
-        </ul>`
-      : `<div class="muted" style="margin-top:10px;">Nog geen events.</div>`;
-
     const card = document.createElement("div");
-    card.className = "card ship-card";
-    card.dataset.shipmentId = s.id;
+    card.className = "ship-card";
 
     card.innerHTML = `
       <div class="row">
-        <div style="min-width:140px;">
-          <div style="font-size:18px;font-weight:700;">#${esc(s.track_code)}</div>
-          <div class="muted">Klant: ${esc(s.customer_name || "-")}</div>
-          <div class="muted">Aangemaakt: ${esc(fmtDT(s.created_at))}</div>
-        </div>
-
-        <div style="margin-left:auto; display:flex; align-items:center; gap:10px;">
-          <span class="badge ${badge}">${esc(status)}</span>
-          <button class="btn js-toggle">Events</button>
-        </div>
+        <strong>#${esc(s.reference || s.id)}</strong>
+        <span class="badge">${esc(s.status)}</span>
       </div>
-
-      <div class="js-events" style="display:none;">
-        ${eventsHtml}
+      <div class="muted">Aangemaakt: ${fmtDT(s.created_at)}</div>
+      <div class="events">
+        ${(s.events || [])
+          .map(
+            (e) => `
+          <div class="event">
+            <span>${fmtDT(e.created_at)}</span>
+            <strong>${esc(e.type)}</strong>
+            <div class="muted">${esc(e.description || "")}</div>
+          </div>`
+          )
+          .join("")}
       </div>
     `;
 
     listEl.appendChild(card);
   });
-
-  wireCardActions();
 }
 
-function wireCardActions() {
-  // Toggle events per kaart
-  document.querySelectorAll(".ship-card .js-toggle").forEach((btn) => {
-    btn.onclick = () => {
-      const card = btn.closest(".ship-card");
-      const panel = card?.querySelector(".js-events");
-      if (!panel) return;
-      const open = panel.style.display !== "none";
-      panel.style.display = open ? "none" : "block";
-      btn.textContent = open ? "Events" : "Verberg";
-    };
-  });
-}
-
-// ---------- main ----------
+// ---------------- Main ----------------
 async function init() {
   showSkeletons();
-   
+
   try {
     if (!sb) {
-      statusEl.textContent = "Supabase client ontbreekt (supabase-config.js).";
+      statusEl.textContent = "Supabase client ontbreekt.";
       return;
     }
 
-    statusEl.textContent = "Sessie controleren...";
+    statusEl.textContent = "Sessie controleren…";
     const session = await requireSession();
     if (!session) return;
 
     const userId = session.user.id;
 
-    // Naam rechtsboven
-    const driverName = await loadDriverName(userId);
-    if (whoEl) whoEl.textContent = driverName || session.user.email || "Ingelogd";
+    if (whoEl) {
+      whoEl.textContent = session.user.email;
+    }
 
-    // Logout
     logoutBtn?.addEventListener("click", async () => {
       await sb.auth.signOut();
       window.location.href = "/dvk-track-trace/driver/login.html";
     });
 
-    // Eerste load
-    statusEl.textContent = "Zendingen + events ophalen...";
+    statusEl.textContent = "Zendingen laden…";
     const shipments = await loadShipmentsWithEvents(userId);
-     
+
     hideSkeletons();
 
-    if (!shipments || shipments.length === 0) {
-      StatusEl.textContent = "Geen zendingen gevonden.";
+    if (!shipments.length) {
+      statusEl.textContent = "Geen zendingen gevonden.";
       return;
-    } 
-     
+    }
+
+    statusEl.textContent = "";
     renderShipments(shipments);
   } catch (err) {
     console.error(err);
