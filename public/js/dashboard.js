@@ -1,13 +1,7 @@
 /* ==========================================================
    DVK – Chauffeursdashboard
    Bestand: public/js/dashboard.js
-
-   - Laadt shipments + events
-   - Laat chauffeur status zetten:
-       1) INSERT in shipment_events
-       2) UPDATE shipments.status
-   - Realtime: herlaadt bij wijzigingen
-========================================================== */
+   ========================================================== */
 
 /* Supabase client (gezet in supabase-config.js) */
 const sb = window.supabaseClient;
@@ -18,64 +12,64 @@ const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
 
+/* Skeleton helpers */
+function showSkeletons() {
+  const sk = document.getElementById("skeletons");
+  if (sk) sk.style.display = "grid";
+  if (listEl) listEl.style.display = "none";
+}
+function hideSkeletons() {
+  const sk = document.getElementById("skeletons");
+  if (sk) sk.style.display = "none";
+  if (listEl) listEl.style.display = "grid";
+}
+
 function setStatus(msg, isError = false) {
   if (!statusEl) return;
   statusEl.textContent = msg || "";
-  statusEl.style.opacity = "1";
-  statusEl.style.color = isError ? "var(--bad, #ef4444)" : "var(--muted, rgba(255,255,255,.62))";
+  statusEl.style.color = isError ? "#ffb4b4" : "";
 }
 
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function fmtDate(iso) {
+function fmtDT(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return String(iso);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return d.toLocaleString("nl-NL", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-/* Badge class op basis van event_type/status */
-function badgeClass(type) {
-  const t = String(type || "").toLowerCase();
-  if (t === "created") return "b-created";
-  if (t === "en_route") return "b-en_route";
-  if (t === "delivered") return "b-delivered";
-  if (t === "problem") return "b-problem";
-  return "";
+function shortId(id) {
+  if (!id) return "";
+  return String(id).slice(0, 8);
 }
 
+/* -------------------------
+   Auth helpers
+------------------------- */
 async function requireSession() {
   const { data, error } = await sb.auth.getSession();
   if (error) throw error;
-
   const session = data?.session;
   if (!session) {
-    // Terug naar login/home
-    window.location.href = "/dvk-track-trace/index.html";
+    // terug naar login/driver index (pas aan als jouw login elders zit)
+    window.location.href = "/dvk-track-trace/driver/index.html";
     return null;
   }
   return session;
 }
 
-async function setWhoAmI(session) {
-  if (!whoEl) return;
-  whoEl.textContent = session?.user?.email || "Ingelogd";
+async function loadDriverName(session) {
+  return session?.user?.email || "Ingelogd";
 }
 
-/* ==========================
-   Data ophalen
-========================== */
+async function signOut() {
+  await sb.auth.signOut();
+  window.location.href = "/dvk-track-trace/driver/index.html";
+}
 
+/* -------------------------
+   Data ophalen
+------------------------- */
 async function loadShipmentsWithEvents(driverId) {
-  // 1) Shipments voor deze driver
+  // 1) Shipments van deze driver
   const { data: shipments, error: shipErr } = await sb
     .from("shipments")
     .select("id, status, customer_name, created_at")
@@ -109,246 +103,228 @@ async function loadShipmentsWithEvents(driverId) {
   }));
 }
 
-/* ==========================
-   Status zetten (STAP 7)
-   - INSERT shipment_events
-   - UPDATE shipments.status
-========================== */
+/* -------------------------
+   Status update + event insert
+------------------------- */
+const STATUS_META = {
+  created: { label: "Aangemeld", noteDefault: "Zending aangemeld", noteRequired: false },
+  en_route: { label: "Onderweg", noteDefault: "Chauffeur is onderweg", noteRequired: false },
+  delivered: { label: "Afgeleverd", noteDefault: "Zending afgeleverd", noteRequired: false },
+  problem: { label: "Probleem", noteDefault: "Probleem gemeld", noteRequired: true },
+};
 
-async function setShipmentStatus({ shipmentId, eventType, note }) {
-  if (!shipmentId) throw new Error("shipmentId ontbreekt");
-  if (!eventType) throw new Error("eventType ontbreekt");
-
-  // 1) INSERT event
-  const { error: insErr } = await sb.from("shipment_events").insert([
-    {
-      shipment_id: shipmentId,
-      event_type: eventType,
-      note: note || null,
-    },
-  ]);
-
-  if (insErr) throw insErr;
-
-  // 2) UPDATE huidige status op shipments
-  const { error: updErr } = await sb
+async function updateShipmentStatus(shipmentId, newStatus, note) {
+  // update shipments.status
+  const { error: upErr } = await sb
     .from("shipments")
-    .update({ status: eventType })
+    .update({ status: newStatus })
     .eq("id", shipmentId);
 
-  if (updErr) throw updErr;
+  if (upErr) throw upErr;
+
+  // insert shipment_events
+  const { error: insErr } = await sb
+    .from("shipment_events")
+    .insert([
+      {
+        shipment_id: shipmentId,
+        event_type: newStatus,
+        note: note || STATUS_META[newStatus]?.noteDefault || "",
+      },
+    ]);
+
+  if (insErr) throw insErr;
 }
 
-/* ==========================
-   Render
-========================== */
+/* -------------------------
+   UI rendering
+------------------------- */
+function badgeClass(status) {
+  // match jouw CSS classes uit driver/dashboard.html
+  // b-created / b-en_route / b-delivered / b-problem
+  return `badge b-${status}`;
+}
 
-function renderShipments(rows) {
-  if (!listEl) return;
+function renderEvents(events) {
+  if (!events || events.length === 0) return `<div class="muted">Nog geen events</div>`;
+  return `
+    <div class="events">
+      ${events
+        .map(
+          (e) => `
+        <div class="row" style="justify-content:space-between; gap:14px;">
+          <div>
+            <div class="${badgeClass(e.event_type)}">${e.event_type}</div>
+            <div class="muted" style="margin-top:6px;">${e.note || ""}</div>
+          </div>
+          <div class="muted" style="white-space:nowrap;">${fmtDT(e.created_at)}</div>
+        </div>
+      `
+        )
+        .join("")}
+    </div>
+  `;
+}
 
-  if (!rows || rows.length === 0) {
-    listEl.innerHTML = `<div class="muted">Geen zendingen gevonden.</div>`;
-    return;
+function renderActionButtons(shipment) {
+  // Buttons met data-status
+  return `
+    <div class="row" style="gap:10px; margin-top:12px; flex-wrap:wrap;">
+      <button class="btn" data-action="status" data-status="created" data-ship="${shipment.id}">Aangemeld</button>
+      <button class="btn" data-action="status" data-status="en_route" data-ship="${shipment.id}">Onderweg</button>
+      <button class="btn" data-action="status" data-status="delivered" data-ship="${shipment.id}">Afgeleverd</button>
+      <button class="btn" data-action="status" data-status="problem" data-ship="${shipment.id}">Probleem</button>
+    </div>
+  `;
+}
+
+function renderShipmentCard(shipment) {
+  const status = shipment.status || "";
+  return `
+    <div class="ship-card">
+      <div class="row" style="justify-content:space-between; align-items:flex-start;">
+        <div>
+          <div style="font-weight:800; font-size:18px;">#${shortId(shipment.id)}</div>
+          <div style="margin-top:4px;">Klant: <strong>${shipment.customer_name || "-"}</strong></div>
+          <div class="muted" style="margin-top:4px;">Aangemaakt: ${fmtDT(shipment.created_at)}</div>
+        </div>
+        <div class="${badgeClass(status)}" style="align-self:flex-start;">${status || "-"}</div>
+      </div>
+
+      ${renderActionButtons(shipment)}
+
+      <div class="sep" style="margin-top:14px;"></div>
+
+      ${renderEvents(shipment.events)}
+    </div>
+  `;
+}
+
+/* -------------------------
+   Status flow (A)
+------------------------- */
+async function handleStatusClick(shipmentId, newStatus) {
+  const meta = STATUS_META[newStatus] || { label: newStatus, noteDefault: "", noteRequired: false };
+
+  // 1) Confirm
+  const ok = window.confirm(`Status wijzigen naar: "${meta.label}"?`);
+  if (!ok) return;
+
+  // 2) Note requirement
+  let note = meta.noteDefault || "";
+
+  if (newStatus === "problem") {
+    note = window.prompt("Probleem omschrijving (verplicht):", "") || "";
+    note = note.trim();
+    if (!note) {
+      alert("Probleem omschrijving is verplicht.");
+      return;
+    }
   }
 
-  const html = rows
-    .map((s) => {
-      const shortId = String(s.id).slice(0, 8);
-      const curStatus = String(s.status || "").toLowerCase();
+  if (newStatus === "delivered") {
+    const extra = window.prompt("Notitie bij afleveren (optioneel):", "") || "";
+    const t = extra.trim();
+    if (t) note = t;
+  }
 
-      const eventsHtml =
-        (s.events || [])
-          .map((e) => {
-            return `
-              <div class="row" style="gap:12px; margin-top:8px;">
-                <span class="badge ${badgeClass(e.event_type)}">${escapeHtml(e.event_type)}</span>
-                <div style="flex:1;">
-                  <div>${escapeHtml(e.note || "")}</div>
-                  <div class="muted">${escapeHtml(fmtDate(e.created_at))}</div>
-                </div>
-              </div>
-            `;
-          })
-          .join("") || `<div class="muted" style="margin-top:8px;">Nog geen events.</div>`;
-
-      // Actieknoppen (chauffeur)
-      const btn = (type, label) => {
-        const isActive = curStatus === type;
-        return `
-          <button
-            class="btn small ${isActive ? "btn-active" : ""}"
-            data-action="setStatus"
-            data-id="${escapeHtml(s.id)}"
-            data-type="${escapeHtml(type)}"
-            ${isActive ? "disabled" : ""}
-          >
-            ${escapeHtml(label)}
-          </button>
-        `;
-      };
-
-      return `
-        <div class="ship-card">
-          <div class="row" style="justify-content:space-between; align-items:flex-start;">
-            <div>
-              <div style="font-weight:700;">#${escapeHtml(shortId)}</div>
-              <div>Klant: ${escapeHtml(s.customer_name || "—")}</div>
-              <div class="muted">Aangemaakt: ${escapeHtml(fmtDate(s.created_at))}</div>
-            </div>
-            <span class="badge ${badgeClass(s.status)}">${escapeHtml(s.status || "—")}</span>
-          </div>
-
-          <div class="sep" style="margin:12px 0;"></div>
-
-          <div class="row" style="flex-wrap:wrap; gap:10px;">
-            ${btn("created", "Aangemeld")}
-            ${btn("en_route", "Onderweg")}
-            ${btn("delivered", "Afgeleverd")}
-            ${btn("problem", "Probleem")}
-          </div>
-
-          <div class="events">
-            ${eventsHtml}
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-
-  listEl.innerHTML = html;
+  // 3) Save
+  setStatus("Status bijwerken...");
+  try {
+    await updateShipmentStatus(shipmentId, newStatus, note);
+    setStatus("Status bijgewerkt ✅");
+  } catch (e) {
+    console.error(e);
+    setStatus("Fout bij status update: " + (e?.message || e), true);
+  }
 }
 
-function bindActions() {
-  if (!listEl) return;
-
-  listEl.addEventListener("click", async (e) => {
-    const el = e.target?.closest?.("[data-action]");
-    if (!el) return;
-
-    const action = el.getAttribute("data-action");
-    if (action !== "setStatus") return;
-
-    const shipmentId = el.getAttribute("data-id");
-    const eventType = el.getAttribute("data-type");
-
-    // Note automatisch invullen (mag je later aanpassen)
-    const defaultNotes = {
-      created: "Zending aangemeld",
-      en_route: "Chauffeur is onderweg",
-      delivered: "Zending afgeleverd",
-      problem: "Probleem gemeld",
-    };
-
-    try {
-      el.disabled = true;
-      setStatus("Status opslaan...");
-
-      await setShipmentStatus({
-        shipmentId,
-        eventType,
-        note: defaultNotes[eventType] || null,
-      });
-
-      setStatus("Status opgeslagen.");
-      // Realtime zal ook triggeren, maar we verversen meteen voor zekerheid
-      await refresh();
-    } catch (err) {
-      console.error(err);
-      setStatus(`Fout bij opslaan: ${err?.message || err}`, true);
-    } finally {
-      // enable gebeurt na refresh via render (button wordt disabled als status actief is)
-    }
-  });
-}
-
-/* ==========================
-   Realtime
-========================== */
-
+/* -------------------------
+   Realtime subscriptions
+------------------------- */
 let realtimeChannel = null;
 
-function setupRealtime(driverId) {
-  // Opruimen als hij al bestaat
-  if (realtimeChannel) {
-    try {
-      sb.removeChannel(realtimeChannel);
-    } catch (_) {}
-    realtimeChannel = null;
-  }
-
+function startRealtime(driverId) {
+  // 1 channel voor shipments + shipment_events
   realtimeChannel = sb
     .channel("dvk-driver-dashboard")
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "shipment_events" },
-      async () => {
-        await refresh(false);
+      { event: "*", schema: "public", table: "shipments" },
+      (payload) => {
+        // Alleen refreshen als driver_id matcht (payload.new kan null bij DELETE)
+        const row = payload.new || payload.old;
+        if (row?.driver_id === driverId) {
+          refresh(driverId, { silent: true });
+        }
       }
     )
     .on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "shipments" },
-      async (payload) => {
-        // Alleen verversen als het om deze driver kan gaan (veilig: gewoon refresh)
-        await refresh(false);
+      { event: "*", schema: "public", table: "shipment_events" },
+      (payload) => {
+        // refresh als het event bij een shipment hoort die we mogelijk tonen
+        // (simpel: altijd refresh)
+        refresh(driverId, { silent: true });
       }
     )
     .subscribe();
 }
 
-/* ==========================
-   Refresh + init
-========================== */
-
-let currentDriverId = null;
-let isRefreshing = false;
-
-async function refresh(showLoading = true) {
-  if (isRefreshing) return;
-  isRefreshing = true;
-
+/* -------------------------
+   Main refresh
+------------------------- */
+async function refresh(driverId, opts = {}) {
+  if (!opts.silent) showSkeletons();
   try {
-    if (showLoading) setStatus("Laden...");
-
-    const data = await loadShipmentsWithEvents(currentDriverId);
-    setStatus(`${data.length} zending(en) geladen.`);
-    renderShipments(data);
-  } catch (err) {
-    console.error(err);
-    setStatus(`Fout bij laden: ${err?.message || err}`, true);
+    const rows = await loadShipmentsWithEvents(driverId);
+    if (listEl) listEl.innerHTML = rows.map(renderShipmentCard).join("");
+    setStatus(`${rows.length} zending(en) geladen.`);
+  } catch (e) {
+    console.error(e);
+    setStatus("Fout bij laden: " + (e?.message || e), true);
   } finally {
-    isRefreshing = false;
+    hideSkeletons();
   }
 }
 
-async function init() {
-  if (!sb) {
-    setStatus("Supabase client ontbreekt (supabase-config.js).", true);
-    return;
-  }
+/* -------------------------
+   Event delegation
+------------------------- */
+document.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("button[data-action='status']");
+  if (!btn) return;
+  const shipmentId = btn.getAttribute("data-ship");
+  const newStatus = btn.getAttribute("data-status");
+  if (!shipmentId || !newStatus) return;
+  await handleStatusClick(shipmentId, newStatus);
+});
 
+/* -------------------------
+   Init
+------------------------- */
+(async function init() {
   try {
+    showSkeletons();
     const session = await requireSession();
     if (!session) return;
 
-    currentDriverId = session.user.id;
-
-    await setWhoAmI(session);
+    const email = await loadDriverName(session);
+    if (whoEl) whoEl.textContent = email;
 
     if (logoutBtn) {
-      logoutBtn.addEventListener("click", async () => {
-        await sb.auth.signOut();
-        window.location.href = "/dvk-track-trace/index.html";
-      });
+      logoutBtn.addEventListener("click", signOut);
     }
 
-    bindActions();
-    setupRealtime(currentDriverId);
-    await refresh(true);
-  } catch (err) {
-    console.error(err);
-    setStatus(`Init fout: ${err?.message || err}`, true);
-  }
-}
+    const driverId = session.user.id;
 
-init();
+    await refresh(driverId);
+
+    // realtime aan
+    startRealtime(driverId);
+  } catch (e) {
+    console.error(e);
+    setStatus("Init fout: " + (e?.message || e), true);
+    hideSkeletons();
+  }
+})();
