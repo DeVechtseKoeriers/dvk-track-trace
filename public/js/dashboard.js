@@ -1,111 +1,227 @@
-<!DOCTYPE html>
-<html lang="nl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chauffeur dashboard | DVK</title>
+/* =========================================================
+   DVK – Chauffeursdashboard
+   Bestand: dvk-track-trace/public/js/dashboard.js
+   Vereist:
+   - supabase-config.js zet window.supabaseClient
+   - driver/dashboard.html heeft: #whoami #logoutBtn #status #list #skeletons
+   Tables (zoals op je screenshots):
+   - public.shipments: id, driver_id, status, customer_name, customer_note, created_at, updated_at, ...
+   - public.shipment_events: id, shipment_id, event_type, note, created_at
+========================================================= */
 
-  <!-- BELANGRIJK: stylesheet pad voor GitHub Pages -->
-  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
+const sb = window.supabaseClient;
 
-  <!-- Fallback styling (zorgt dat het altijd netjes is, ook als style.css faalt) -->
-  <style>
-    body { margin:0; background:#0b1220; color:rgba(255,255,255,.92); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
-    .container { max-width:980px; margin:28px auto; padding:0 16px; }
-    .topbar { display:flex; align-items:center; gap:16px; padding:14px 16px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:14px; }
-    .brand strong { display:block; font-size:16px; }
-    .brand span { display:block; opacity:.7; font-size:13px; margin-top:2px; }
-    .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .btn { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); color:rgba(255,255,255,.92); padding:10px 12px; border-radius:10px; cursor:pointer; }
-    .btn:hover { background:rgba(255,255,255,.10); }
-    .card { margin-top:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:16px; }
-    .h1 { margin:0; font-size:32px; }
-    .small { margin:6px 0 0; opacity:.75; }
-    .sep { height:1px; background:rgba(255,255,255,.08); margin:14px 0; }
-    .muted { opacity:.7; font-size:13px; }
+/* DOM */
+const whoEl = document.getElementById("whoami");
+const logoutBtn = document.getElementById("logoutBtn");
+const statusEl = document.getElementById("status");
+const listEl = document.getElementById("list");
 
-    /* grid en cards */
-    .grid { display:grid; gap:12px; margin-top:14px; }
-    .ship-card { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; }
-    .row { display:flex; gap:10px; align-items:flex-start; }
-    .ship-code { font-weight:700; }
-    .badge { padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.06); }
-    .b-created { background:rgba(59,130,246,.18); }
-    .b-en_route { background:rgba(245,158,11,.18); }
-    .b-delivered { background:rgba(34,197,94,.18); }
-    .b-problem { background:rgba(239,68,68,.18); }
+/* Skeletons */
+function showSkeletons() {
+  const sk = document.getElementById("skeletons");
+  if (sk) sk.style.display = "grid";
+  if (listEl) listEl.style.display = "none";
+}
+function hideSkeletons() {
+  const sk = document.getElementById("skeletons");
+  if (sk) sk.style.display = "none";
+  if (listEl) listEl.style.display = "grid";
+}
 
-    /* events */
-    .events { margin-top:10px; padding-left:6px; }
-    .event-row { display:flex; gap:10px; margin-top:10px; }
-    .event-dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.55); margin-top:6px; flex:0 0 auto; }
-    .event-title { font-weight:600; }
-    .event-note { margin-top:2px; }
-    .event-dt { margin-top:2px; }
+/* Helpers */
+function esc(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
-    /* skeleton */
-    #skeletons { display:none; }
-    .skeleton .sk-line { height:10px; background:rgba(255,255,255,.06); border-radius:999px; margin:10px 0; }
-    .w40 { width:40%; } .w60 { width:60%; } .w50 { width:50%; }
-    .sk-chiprow { display:flex; gap:8px; margin-top:10px; }
-    .sk-chip { height:22px; border-radius:999px; background:rgba(255,255,255,.06); }
-    .w30 { width:30%; }
-  </style>
-</head>
+function fmtDT(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString("nl-NL", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
-<body>
-  <div class="container">
-    <div class="topbar">
-      <div class="brand">
-        <strong>De Vechtse Koeriers</strong>
-        <span>Chauffeursportaal</span>
-      </div>
+function badgeClass(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === "created") return "badge b-created";
+  if (s === "en_route") return "badge b-en_route";
+  if (s === "delivered") return "badge b-delivered";
+  if (s === "problem") return "badge b-problem";
+  return "badge";
+}
 
-      <div class="topbar-right">
-        <span class="muted" id="whoami">...</span>
-        <button class="btn" id="logoutBtn">Uitloggen</button>
-      </div>
-    </div>
+/* Auth */
+async function requireSession() {
+  const { data, error } = await sb.auth.getSession();
+  if (error) throw error;
+  const session = data?.session;
+  if (!session) {
+    window.location.href = "/dvk-track-trace/driver/login.html";
+    return null;
+  }
+  return session;
+}
 
-    <div class="card">
-      <h1 class="h1">Dashboard</h1>
-      <p class="small">Jouw zendingen + status-events</p>
+/* Laad naam rechtsboven (veilig: geen DB nodig) */
+async function loadDriverName() {
+  const { data, error } = await sb.auth.getUser();
+  if (error) return "";
+  const u = data?.user;
+  return u?.user_metadata?.name || u?.email || "";
+}
 
-      <div class="sep"></div>
+/* Data ophalen: shipments + events (zonder join/relationship) */
+async function loadShipmentsWithEvents(driverId) {
+  // 1) Shipments van deze driver
+  const { data: shipments, error: shipErr } = await sb
+    .from("shipments")
+    .select("id, driver_id, status, customer_name, customer_note, created_at")
+    .eq("driver_id", driverId)
+    .order("created_at", { ascending: false });
 
-      <div id="status" class="muted">Laden…</div>
+  if (shipErr) throw shipErr;
 
-      <div id="list" class="grid"></div>
+  const ids = (shipments || []).map((s) => s.id);
+  if (ids.length === 0) return [];
 
-      <!-- Skeletons -->
-      <div id="skeletons" class="grid" aria-hidden="true">
-        <div class="ship-card skeleton">
-          <div class="sk-line w40"></div>
-          <div class="sk-line w60"></div>
-          <div class="sk-line w50"></div>
-          <div class="sk-chiprow">
-            <div class="sk-chip w30"></div>
-            <div class="sk-chip w40"></div>
+  // 2) Events voor die shipments
+  const { data: events, error: evErr } = await sb
+    .from("shipment_events")
+    .select("id, shipment_id, event_type, note, created_at")
+    .in("shipment_id", ids)
+    .order("created_at", { ascending: true });
+
+  if (evErr) throw evErr;
+
+  // 3) Koppel events aan shipments
+  const byShipment = new Map();
+  (events || []).forEach((e) => {
+    const key = e.shipment_id;
+    if (!byShipment.has(key)) byShipment.set(key, []);
+    byShipment.get(key).push(e);
+  });
+
+  return (shipments || []).map((s) => ({
+    ...s,
+    events: byShipment.get(s.id) || [],
+  }));
+}
+
+/* Render */
+function renderShipments(items) {
+  if (!listEl) return;
+
+  if (!items || items.length === 0) {
+    listEl.innerHTML = "";
+    statusEl.textContent = "Geen zendingen gevonden.";
+    return;
+  }
+
+  statusEl.textContent = `${items.length} zending(en) geladen.`;
+
+  listEl.innerHTML = items
+    .map((s) => {
+      const idShort = String(s.id || "").slice(0, 8);
+      const createdAt = fmtDT(s.created_at);
+
+      const evHtml = (s.events || [])
+        .map((e) => {
+          const t = esc(e.event_type);
+          const note = esc(e.note || "");
+          const dt = fmtDT(e.created_at);
+          return `
+            <div class="row">
+              <span class="${badgeClass(t)}">${t}</span>
+              <span class="muted">${note ? note : ""}</span>
+              <span class="muted" style="margin-left:auto">${dt}</span>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="ship-card">
+          <div class="row" style="justify-content:space-between;">
+            <div>
+              <div><strong>#${esc(idShort)}</strong></div>
+              <div class="muted">Klant: ${esc(s.customer_name || "-")}</div>
+              <div class="muted">Aangemaakt: ${esc(createdAt)}</div>
+            </div>
+            <div class="${badgeClass(s.status)}">${esc(s.status || "-")}</div>
+          </div>
+
+          ${
+            s.customer_note
+              ? `<div class="muted" style="margin-top:8px;">${esc(s.customer_note)}</div>`
+              : ""
+          }
+
+          <div class="events">
+            ${evHtml || `<div class="muted">Geen events.</div>`}
           </div>
         </div>
-        <div class="ship-card skeleton">
-          <div class="sk-line w40"></div>
-          <div class="sk-line w60"></div>
-          <div class="sk-line w50"></div>
-          <div class="sk-chiprow">
-            <div class="sk-chip w30"></div>
-            <div class="sk-chip w40"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+      `;
+    })
+    .join("");
+}
 
-  <!-- Supabase -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+/* Main */
+async function init() {
+  showSkeletons();
 
-  <!-- Let op: absolute paden i.v.m. GitHub Pages -->
-  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
-  <script src="/dvk-track-trace/public/js/dashboard.js"></script>
-</body>
-</html>
+  try {
+    if (!sb) {
+      statusEl.textContent = "Supabase client ontbreekt (supabase-config.js niet geladen).";
+      return;
+    }
+
+    statusEl.textContent = "Sessie controleren…";
+    const session = await requireSession();
+    if (!session) return;
+
+    const driverName = await loadDriverName();
+    if (whoEl) whoEl.textContent = driverName || session.user.email || "";
+
+    // Logout
+    if (logoutBtn) {
+      logoutBtn.onclick = async () => {
+        await sb.auth.signOut();
+        window.location.href = "/dvk-track-trace/driver/login.html";
+      };
+    }
+
+    statusEl.textContent = "Zendingen + events ophalen…";
+    const userId = session.user.id;
+
+    const shipments = await loadShipmentsWithEvents(userId);
+
+    renderShipments(shipments);
+  } catch (err) {
+    console.error("Dashboard error:", err);
+    const msg =
+      err?.message ||
+      (typeof err === "string" ? err : "Onbekende fout (zie console).");
+    statusEl.textContent = "Fout bij laden: " + msg;
+    if (listEl) listEl.innerHTML = "";
+  } finally {
+    hideSkeletons();
+  }
+}
+
+// Start (ook als DOM al geladen is)
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
