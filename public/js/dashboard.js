@@ -1,226 +1,111 @@
-/* ============================================================
-   DVK – Chauffeursdashboard
-   Bestand: dvk-track-trace/public/js/dashboard.js
-============================================================ */
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chauffeur dashboard | DVK</title>
 
-const sb = window.supabaseClient;
+  <!-- BELANGRIJK: stylesheet pad voor GitHub Pages -->
+  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
 
-// DOM
-const whoEl = document.getElementById("whoami");
-const logoutBtn = document.getElementById("logoutBtn");
-const statusEl = document.getElementById("status");
-const listEl = document.getElementById("list");
-const skEl = document.getElementById("skeletons");
+  <!-- Fallback styling (zorgt dat het altijd netjes is, ook als style.css faalt) -->
+  <style>
+    body { margin:0; background:#0b1220; color:rgba(255,255,255,.92); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
+    .container { max-width:980px; margin:28px auto; padding:0 16px; }
+    .topbar { display:flex; align-items:center; gap:16px; padding:14px 16px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:14px; }
+    .brand strong { display:block; font-size:16px; }
+    .brand span { display:block; opacity:.7; font-size:13px; margin-top:2px; }
+    .topbar-right { margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .btn { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); color:rgba(255,255,255,.92); padding:10px 12px; border-radius:10px; cursor:pointer; }
+    .btn:hover { background:rgba(255,255,255,.10); }
+    .card { margin-top:14px; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:16px; }
+    .h1 { margin:0; font-size:32px; }
+    .small { margin:6px 0 0; opacity:.75; }
+    .sep { height:1px; background:rgba(255,255,255,.08); margin:14px 0; }
+    .muted { opacity:.7; font-size:13px; }
 
-// ---------- UI helpers ----------
-function showSkeletons() {
-  if (skEl) skEl.style.display = "grid";
-  if (listEl) listEl.style.display = "none";
-}
-function hideSkeletons() {
-  if (skEl) skEl.style.display = "none";
-  if (listEl) listEl.style.display = "grid";
-}
+    /* grid en cards */
+    .grid { display:grid; gap:12px; margin-top:14px; }
+    .ship-card { background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:14px; }
+    .row { display:flex; gap:10px; align-items:flex-start; }
+    .ship-code { font-weight:700; }
+    .badge { padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.06); }
+    .b-created { background:rgba(59,130,246,.18); }
+    .b-en_route { background:rgba(245,158,11,.18); }
+    .b-delivered { background:rgba(34,197,94,.18); }
+    .b-problem { background:rgba(239,68,68,.18); }
 
-function esc(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
+    /* events */
+    .events { margin-top:10px; padding-left:6px; }
+    .event-row { display:flex; gap:10px; margin-top:10px; }
+    .event-dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,.55); margin-top:6px; flex:0 0 auto; }
+    .event-title { font-weight:600; }
+    .event-note { margin-top:2px; }
+    .event-dt { margin-top:2px; }
 
-function fmtDT(iso) {
-  if (!iso) return "-";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString("nl-NL", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+    /* skeleton */
+    #skeletons { display:none; }
+    .skeleton .sk-line { height:10px; background:rgba(255,255,255,.06); border-radius:999px; margin:10px 0; }
+    .w40 { width:40%; } .w60 { width:60%; } .w50 { width:50%; }
+    .sk-chiprow { display:flex; gap:8px; margin-top:10px; }
+    .sk-chip { height:22px; border-radius:999px; background:rgba(255,255,255,.06); }
+    .w30 { width:30%; }
+  </style>
+</head>
 
-function badgeClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "created") return "badge b-created";
-  if (s === "en_route") return "badge b-en_route";
-  if (s === "delivered") return "badge b-delivered";
-  if (s === "problem") return "badge b-problem";
-  return "badge";
-}
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <strong>De Vechtse Koeriers</strong>
+        <span>Chauffeursportaal</span>
+      </div>
 
-// Kies automatisch een “code” veld dat wél bestaat
-function pickShipmentCode(sh) {
-  // probeer veelvoorkomende namen
-  return (
-    sh?._code ??
-    sh?.code ??
-    sh?.reference ??
-    sh?.tracking_code ??
-    sh?.tracking ??
-    sh?.shipment_code ??
-    sh?.id ??
-    ""
-  );
-}
+      <div class="topbar-right">
+        <span class="muted" id="whoami">...</span>
+        <button class="btn" id="logoutBtn">Uitloggen</button>
+      </div>
+    </div>
 
-// ---------- Auth ----------
-async function requireSession() {
-  const { data, error } = await sb.auth.getSession();
-  if (error) throw error;
-  const session = data?.session;
-  if (!session) {
-    window.location.href = "/dvk-track-trace/driver/login.html";
-    return null;
-  }
-  return session;
-}
+    <div class="card">
+      <h1 class="h1">Dashboard</h1>
+      <p class="small">Jouw zendingen + status-events</p>
 
-// ---------- Data loaders ----------
-async function loadShipmentsForDriver(driverId) {
-  // BELANGRIJK: select("*") zodat we niet crashen op kolomnamen
-  const { data, error } = await sb
-    .from("shipments")
-    .select("*")
-    .eq("driver_id", driverId)
-    .order("created_at", { ascending: false });
+      <div class="sep"></div>
 
-  if (error) throw error;
-  return data || [];
-}
+      <div id="status" class="muted">Laden…</div>
 
-async function loadEventsForShipmentIds(shipmentIds) {
-  if (!shipmentIds.length) return [];
+      <div id="list" class="grid"></div>
 
-  const { data, error } = await sb
-    .from("shipment_events")
-    .select("id,shipment_id,event_type,note,created_at")
-    .in("shipment_id", shipmentIds)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return data || [];
-}
-
-function groupEventsByShipment(events) {
-  const map = new Map();
-  for (const ev of events) {
-    const sid = ev.shipment_id;
-    if (!map.has(sid)) map.set(sid, []);
-    map.get(sid).push(ev);
-  }
-  return map;
-}
-
-// ---------- Render ----------
-function renderShipments(shipments, eventsByShipment) {
-  if (!listEl) return;
-
-  if (!shipments || shipments.length === 0) {
-    listEl.innerHTML = "";
-    statusEl.textContent = "Geen zendingen gevonden.";
-    return;
-  }
-
-  statusEl.textContent = `${shipments.length} zending(en) geladen.`;
-
-  const html = shipments
-    .map((s) => {
-      const code = pickShipmentCode(s);
-      const customer = s.customer_name ?? s.customer ?? "";
-      const st = s.status ?? "";
-      const createdAt = s.created_at;
-
-      const events = eventsByShipment.get(s.id) || [];
-      const topEvents = events.slice(0, 5);
-
-      const eventsHtml =
-        topEvents.length === 0
-          ? `<div class="events muted">Geen events.</div>`
-          : `
-            <div class="events">
-              ${topEvents
-                .map((ev) => {
-                  const evType = esc(ev.event_type || "");
-                  const note = esc(ev.note || "");
-                  const dt = fmtDT(ev.created_at);
-                  return `<div class="event-row">
-                            <span class="event-dot"></span>
-                            <div class="event-body">
-                              <div class="event-title">${evType}</div>
-                              <div class="event-note muted">${note}</div>
-                              <div class="event-dt muted">${dt}</div>
-                            </div>
-                          </div>`;
-                })
-                .join("")}
-            </div>
-          `;
-
-      return `
-        <div class="ship-card">
-          <div class="row">
-            <div>
-              <div class="ship-code">#${esc(code)}</div>
-              <div class="muted">Klant: ${esc(customer)}</div>
-              <div class="muted">Aangemaakt: ${esc(fmtDT(createdAt))}</div>
-            </div>
-            <div style="margin-left:auto; display:flex; gap:8px; align-items:flex-start;">
-              <span class="${badgeClass(st)}">${esc(st)}</span>
-            </div>
+      <!-- Skeletons -->
+      <div id="skeletons" class="grid" aria-hidden="true">
+        <div class="ship-card skeleton">
+          <div class="sk-line w40"></div>
+          <div class="sk-line w60"></div>
+          <div class="sk-line w50"></div>
+          <div class="sk-chiprow">
+            <div class="sk-chip w30"></div>
+            <div class="sk-chip w40"></div>
           </div>
-          ${eventsHtml}
         </div>
-      `;
-    })
-    .join("");
+        <div class="ship-card skeleton">
+          <div class="sk-line w40"></div>
+          <div class="sk-line w60"></div>
+          <div class="sk-line w50"></div>
+          <div class="sk-chiprow">
+            <div class="sk-chip w30"></div>
+            <div class="sk-chip w40"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  listEl.innerHTML = html;
-}
+  <!-- Supabase -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-// ---------- Main ----------
-async function init() {
-  showSkeletons();
-
-  try {
-    if (!sb) {
-      statusEl.textContent = "Supabase client ontbreekt (supabase-config.js).";
-      return;
-    }
-
-    statusEl.textContent = "Sessie controleren…";
-    const session = await requireSession();
-    if (!session) return;
-
-    if (whoEl) whoEl.textContent = session.user?.email || "Ingelogd";
-
-    logoutBtn?.addEventListener("click", async () => {
-      await sb.auth.signOut();
-      window.location.href = "/dvk-track-trace/driver/login.html";
-    });
-
-    const driverId = session.user.id;
-
-    statusEl.textContent = "Zendingen ophalen…";
-    const shipments = await loadShipmentsForDriver(driverId);
-
-    statusEl.textContent = "Events ophalen…";
-    const ids = shipments.map((s) => s.id);
-    const events = await loadEventsForShipmentIds(ids);
-    const eventsByShipment = groupEventsByShipment(events);
-
-    hideSkeletons();
-    renderShipments(shipments, eventsByShipment);
-  } catch (err) {
-    console.error(err);
-    hideSkeletons();
-    statusEl.textContent =
-      "Fout bij laden: " + (err?.message ? err.message : String(err));
-  }
-}
-
-document.addEventListener("DOMContentLoaded", init);
+  <!-- Let op: absolute paden i.v.m. GitHub Pages -->
+  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
+  <script src="/dvk-track-trace/public/js/dashboard.js"></script>
+</body>
+</html>
