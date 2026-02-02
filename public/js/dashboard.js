@@ -1,16 +1,6 @@
 /* ============================================================
-   DVK – Chauffeursdashboard
+   DVK – Chauffeursdashboard (met Realtime refresh)
    Bestand: dvk-track-trace/public/js/dashboard.js
-
-   Vereist in dashboard.html:
-   - <span id="whoami"></span>
-   - <button id="logoutBtn"></button>
-   - <div id="status"></div>
-   - <div id="list"></div>
-   - <div id="skeletons"></div>
-
-   Vereist dat supabase-config.js dit zet:
-   window.supabaseClient = supabase.createClient(URL, ANON_KEY)
    ============================================================ */
 
 const sb = window.supabaseClient;
@@ -20,6 +10,10 @@ const whoEl = document.getElementById("whoami");
 const logoutBtn = document.getElementById("logoutBtn");
 const statusEl = document.getElementById("status");
 const listEl = document.getElementById("list");
+
+/* Realtime channel holder */
+let rtChannel = null;
+let refreshTimer = null;
 
 /* -------------------------
    Skeleton helpers
@@ -51,7 +45,6 @@ function fmtDate(d) {
   if (!d) return "";
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return "";
-  // NL formaat: dd-mm-jjjj, hh:mm
   return dt.toLocaleString("nl-NL", {
     day: "2-digit",
     month: "2-digit",
@@ -62,7 +55,6 @@ function fmtDate(d) {
 }
 
 function badgeClass(type) {
-  // matcht jouw CSS classes: b-created, b-en_route, b-delivered, b-problem
   const t = String(type || "").toLowerCase();
   if (t === "created") return "badge b-created";
   if (t === "en_route") return "badge b-en_route";
@@ -80,7 +72,6 @@ async function requireSession() {
 
   const session = data?.session;
   if (!session) {
-    // niet ingelogd -> terug naar login
     window.location.href = "/dvk-track-trace/driver/login.html";
     return null;
   }
@@ -88,17 +79,13 @@ async function requireSession() {
 }
 
 async function loadDriverName(session) {
-  // Toon email of (als je later drivers tabel hebt) de naam.
-  const email = session?.user?.email || "";
-  return email || "Ingelogd";
+  return session?.user?.email || "Ingelogd";
 }
 
 /* -------------------------
    Data ophalen
 ------------------------- */
 async function loadShipmentsWithEvents(driverId) {
-  // 1) Shipments voor deze chauffeur
-  // Let op: géén kolommen gebruiken die niet bestaan (geen reference, geen _code, etc).
   const { data: shipments, error: shipErr } = await sb
     .from("shipments")
     .select("id, status, customer_name, created_at")
@@ -110,7 +97,6 @@ async function loadShipmentsWithEvents(driverId) {
   const ids = (shipments || []).map((s) => s.id);
   if (ids.length === 0) return [];
 
-  // 2) Alle events voor deze shipment_ids
   const { data: events, error: evErr } = await sb
     .from("shipment_events")
     .select("id, shipment_id, event_type, note, created_at")
@@ -119,7 +105,6 @@ async function loadShipmentsWithEvents(driverId) {
 
   if (evErr) throw evErr;
 
-  // map events per shipment_id
   const byShip = new Map();
   for (const e of events || []) {
     const arr = byShip.get(e.shipment_id) || [];
@@ -127,7 +112,6 @@ async function loadShipmentsWithEvents(driverId) {
     byShip.set(e.shipment_id, arr);
   }
 
-  // combine
   return (shipments || []).map((s) => ({
     ...s,
     events: byShip.get(s.id) || [],
@@ -153,7 +137,6 @@ function renderShipments(items) {
       const klant = s.customer_name || "—";
       const createdAt = fmtDate(s.created_at);
 
-      // Bovenste status: pak shipments.status, anders laatste event_type
       const lastEvent = s.events?.length ? s.events[s.events.length - 1] : null;
       const topStatus = s.status || lastEvent?.event_type || "onbekend";
 
@@ -182,7 +165,6 @@ function renderShipments(items) {
               <div class="muted">Aangemaakt: ${esc(createdAt)}</div>
             </div>
 
-            <!-- Compacte status rechtsboven -->
             <span class="${badgeClass(topStatus)}" style="margin-left:auto;">
               ${esc(topStatus)}
             </span>
@@ -197,6 +179,44 @@ function renderShipments(items) {
     .join("");
 
   listEl.innerHTML = html;
+}
+
+/* -------------------------
+   Realtime refresh (debounced)
+------------------------- */
+function scheduleRefresh(refreshFn) {
+  // voorkom 10 refreshes achter elkaar bij meerdere events
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => refreshFn(), 400);
+}
+
+async function setupRealtime(driverId, refreshFn) {
+  // schoon afsluiten als hij al bestaat
+  try {
+    if (rtChannel) {
+      await sb.removeChannel(rtChannel);
+      rtChannel = null;
+    }
+  } catch (_) {}
+
+  rtChannel = sb
+    .channel("dvk-driver-dashboard")
+    // shipments changes van deze driver
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shipments", filter: `driver_id=eq.${driverId}` },
+      () => scheduleRefresh(refreshFn)
+    )
+    // alle shipment_events (we refreshen, maar jouw RLS zorgt dat je alleen eigen ziet)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "shipment_events" },
+      () => scheduleRefresh(refreshFn)
+    )
+    .subscribe((status) => {
+      // optioneel: laat status zien in console
+      console.log("Realtime status:", status);
+    });
 }
 
 /* -------------------------
@@ -215,6 +235,8 @@ async function init() {
     const session = await requireSession();
     if (!session) return;
 
+    const driverId = session.user.id;
+
     // naam rechtsboven
     const driverName = await loadDriverName(session);
     if (whoEl) whoEl.textContent = driverName;
@@ -223,6 +245,7 @@ async function init() {
     if (logoutBtn) {
       logoutBtn.addEventListener("click", async () => {
         try {
+          if (rtChannel) await sb.removeChannel(rtChannel);
           await sb.auth.signOut();
         } finally {
           window.location.href = "/dvk-track-trace/driver/login.html";
@@ -230,19 +253,29 @@ async function init() {
       });
     }
 
-    statusEl.textContent = "Zendingen + events ophalen...";
+    const refresh = async () => {
+      try {
+        statusEl.textContent = "Verversen...";
+        const shipments = await loadShipmentsWithEvents(driverId);
+        hideSkeletons();
+        statusEl.textContent = `${shipments.length} zending(en) geladen.`;
+        renderShipments(shipments);
+      } catch (e) {
+        console.error(e);
+        hideSkeletons();
+        statusEl.textContent = "Fout bij laden: " + (e?.message || String(e));
+      }
+    };
 
-    const driverId = session.user.id; // matcht jouw shipments.driver_id
-    const shipments = await loadShipmentsWithEvents(driverId);
+    // eerste load
+    await refresh();
 
-    hideSkeletons();
-    statusEl.textContent = `${shipments.length} zending(en) geladen.`;
-    renderShipments(shipments);
+    // realtime
+    await setupRealtime(driverId, refresh);
   } catch (err) {
     console.error(err);
     hideSkeletons();
-    const msg = err?.message || String(err);
-    statusEl.textContent = "Fout bij laden: " + msg;
+    statusEl.textContent = "Fout bij laden: " + (err?.message || String(err));
   }
 }
 
