@@ -8,9 +8,13 @@
    - Handtekening (tekst) verplicht
    - Extra notitie optioneel
 
-   Probleem (A2.3) blijft:
+   A2.3 Probleem:
    - Categorie dropdown verplicht
    - Omschrijving verplicht
+
+   A2.5 UX:
+   - Onthoudt laatste "afleverlocatie" per chauffeur (localStorage)
+   - Auto-vult locatie in bij openen Afgeleverd-panel
 ========================================================== */
 
 const sb = window.supabaseClient;
@@ -44,6 +48,28 @@ function shortId(id) {
 
 function badgeClass(status) {
   return `badge b-${String(status || "").toLowerCase()}`;
+}
+
+/* -------------------------
+   A2.5 localStorage helpers
+------------------------- */
+function lsKey(prefix) {
+  // per chauffeur (currentDriverId)
+  return `dvk_${prefix}_${currentDriverId || "unknown"}`;
+}
+
+function lsGet(prefix) {
+  try {
+    return localStorage.getItem(lsKey(prefix)) || "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function lsSet(prefix, value) {
+  try {
+    localStorage.setItem(lsKey(prefix), String(value || ""));
+  } catch (_) {}
 }
 
 /* -------------------------
@@ -154,8 +180,10 @@ function renderEvents(events) {
   `;
 }
 
-/* A2.4: delivered panel met echte dropdown + signature text */
 function renderDeliveredPanel(shipmentId, isOpen) {
+  // A2.5: default locatie uit localStorage (kan "" zijn)
+  const lastLoc = lsGet("last_delivery_location");
+
   return `
     <div class="panel" data-panel="delivered" style="display:${isOpen ? "block" : "none"};">
       <div class="field">
@@ -165,19 +193,19 @@ function renderDeliveredPanel(shipmentId, isOpen) {
 
       <div class="field">
         <div class="label">Afleverlocatie (verplicht)</div>
-        <select class="select" data-delivered-location>
+        <select class="select" data-delivered-location data-default-loc="${lastLoc}">
           <option value="">Kies locatie…</option>
           <option value="voordeur">Voordeur</option>
           <option value="buren">Buren</option>
           <option value="receptie">Receptie</option>
           <option value="pakketbox">Pakketbox</option>
         </select>
+        <div class="help">Auto-voorkeur: laatst gebruikte locatie wordt automatisch geselecteerd.</div>
       </div>
 
       <div class="field">
         <div class="label">Handtekening (verplicht)</div>
         <input class="input" type="text" data-delivered-signature placeholder="Typ naam als handtekening (bijv. Jan Jansen)" />
-        <div class="help">Dit is een tekst-handtekening voor bewijs (later kunnen we dit vervangen door echte handtekening/foto).</div>
       </div>
 
       <div class="field">
@@ -193,7 +221,6 @@ function renderDeliveredPanel(shipmentId, isOpen) {
   `;
 }
 
-/* A2.3: problem panel */
 function renderProblemPanel(shipmentId, isOpen) {
   return `
     <div class="panel" data-panel="problem" style="display:${isOpen ? "block" : "none"};">
@@ -276,10 +303,24 @@ async function refresh(opts = { silent: false }) {
     const rows = await loadShipmentsWithEvents(currentDriverId);
     if (listEl) listEl.innerHTML = rows.map(renderShipmentCard).join("");
     setStatus(`${rows.length} zending(en) geladen.`);
+
+    // A2.5: auto-select default location in open delivered panels
+    applyDefaultDeliveryLocation();
   } catch (e) {
     console.error(e);
     setStatus("Fout bij laden: " + (e?.message || e), true);
   }
+}
+
+/* A2.5: na render default location toepassen */
+function applyDefaultDeliveryLocation() {
+  const selects = document.querySelectorAll("select[data-delivered-location]");
+  selects.forEach((sel) => {
+    const def = sel.getAttribute("data-default-loc") || "";
+    if (!def) return;
+    // alleen invullen als de user nog niks gekozen heeft
+    if (!sel.value) sel.value = def;
+  });
 }
 
 /* -------------------------
@@ -309,6 +350,7 @@ function getCard(shipmentId) {
 
 async function doQuickStatus(shipmentId, status) {
   if (isSaving) return;
+
   const ok = window.confirm(`Status wijzigen naar "${status}"?`);
   if (!ok) return;
 
@@ -332,7 +374,6 @@ async function doQuickStatus(shipmentId, status) {
   }
 }
 
-/* A2.4 save delivered */
 async function saveDelivered(shipmentId) {
   if (isSaving) return;
   const card = getCard(shipmentId);
@@ -346,6 +387,9 @@ async function saveDelivered(shipmentId) {
   if (!receiver) return alert("Naam ontvanger is verplicht.");
   if (!location) return alert("Afleverlocatie is verplicht.");
   if (!signature) return alert("Handtekening (tekst) is verplicht.");
+
+  // A2.5: onthoud deze locatie voor volgende keer
+  lsSet("last_delivery_location", location);
 
   const note = extraNote
     ? `Ontvangen door: ${receiver} | Locatie: ${location} | Handtekening: ${signature} | Notitie: ${extraNote}`
@@ -366,7 +410,6 @@ async function saveDelivered(shipmentId) {
   }
 }
 
-/* A2.3 save problem */
 async function saveProblem(shipmentId) {
   if (isSaving) return;
   const card = getCard(shipmentId);
