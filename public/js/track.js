@@ -58,7 +58,7 @@ async function loadByTrackCode(code) {
     .from("shipment_events")
     .select("id, shipment_id, event_type, note, created_at")
     .eq("shipment_id", shipment.id)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: false });
 
   if (evErr) throw evErr;
 
