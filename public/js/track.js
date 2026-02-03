@@ -3,6 +3,8 @@
    Bestand: public/js/track.js
 ========================================================== */
 
+console.log("track.js loaded ✅");
+
 const sb = window.supabaseClient;
 
 const trackInput = document.getElementById("trackInput");
@@ -41,7 +43,6 @@ function badgeClass(status) {
 }
 
 async function loadByTrackCode(trackCode) {
-  // 1) shipment op track_code
   const { data: shipment, error: shipErr } = await sb
     .from("shipments")
     .select("id, status, customer_name, created_at, track_code")
@@ -51,7 +52,6 @@ async function loadByTrackCode(trackCode) {
   if (shipErr) throw shipErr;
   if (!shipment) return null;
 
-  // 2) events
   const { data: events, error: evErr } = await sb
     .from("shipment_events")
     .select("id, shipment_id, event_type, note, created_at")
@@ -78,8 +78,7 @@ function render(data) {
   if (!events || events.length === 0) {
     timeline.innerHTML = `<div class="muted">Nog geen updates.</div>`;
   } else {
-    timeline.innerHTML = events
-      .slice()
+    timeline.innerHTML = [...events]
       .reverse()
       .map(
         (e) => `
@@ -100,6 +99,12 @@ function render(data) {
 }
 
 async function runSearch() {
+  if (!sb) {
+    setMsg("Supabase client ontbreekt. Controleer supabase-config.js + CDN.", true);
+    console.error("window.supabaseClient is undefined");
+    return;
+  }
+
   const code = (trackInput.value || "").trim().toUpperCase();
   if (!code) {
     setMsg("Vul een trackcode in.", true);
@@ -123,20 +128,18 @@ async function runSearch() {
   }
 }
 
+/* Bindings */
 trackBtn.addEventListener("click", runSearch);
 trackInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") runSearch();
 });
 
-// Auto: ?code=DVK12345
+/* Auto: ?code=DVK12345 */
 (function preloadFromUrl() {
   const url = new URL(window.location.href);
   const code = (url.searchParams.get("code") || "").trim();
   if (code) {
     trackInput.value = code;
-    runHelp();
-  }
-  function runHelp() {
     runSearch();
   }
 })();
