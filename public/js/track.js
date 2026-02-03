@@ -1,6 +1,6 @@
 /* ==========================================================
    DVK – Track & Trace (public)
-   Bestand: public/js/track.js
+   public/js/track.js
 ========================================================== */
 
 console.log("track.js loaded ✅");
@@ -24,13 +24,7 @@ function setMsg(text, isError = false) {
 function fmtDT(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString("nl-NL", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleString("nl-NL");
 }
 
 function badgeClass(status) {
@@ -42,11 +36,11 @@ function badgeClass(status) {
   return "badge";
 }
 
-async function loadByTrackCode(trackCode) {
+async function loadByTrackCode(code) {
   const { data: shipment, error: shipErr } = await sb
     .from("shipments")
     .select("id, status, customer_name, created_at, track_code")
-    .eq("track_code", trackCode)
+    .eq("track_code", code)
     .maybeSingle();
 
   if (shipErr) throw shipErr;
@@ -71,75 +65,62 @@ function render(data) {
 
   const { shipment, events } = data;
 
-  customer.textContent = shipment.customer_name ? `Klant: ${shipment.customer_name}` : "";
+  customer.textContent = shipment.customer_name
+    ? `Klant: ${shipment.customer_name}`
+    : "";
+
   statusBadge.className = badgeClass(shipment.status);
   statusBadge.textContent = shipment.status || "-";
 
-  if (!events || events.length === 0) {
-    timeline.innerHTML = `<div class="muted">Nog geen updates.</div>`;
-  } else {
-    timeline.innerHTML = [...events]
-      .reverse()
-      .map(
-        (e) => `
-        <div class="event">
-          <div class="event-left">
+  timeline.innerHTML = events.length
+    ? events
+        .reverse()
+        .map(
+          (e) => `
+          <div class="event">
             <div class="${badgeClass(e.event_type)}">${e.event_type}</div>
-            <div>
-              <div>${e.note || ""}</div>
-              <div class="muted">${fmtDT(e.created_at)}</div>
-            </div>
+            <div class="muted">${fmtDT(e.created_at)}</div>
+            <div>${e.note || ""}</div>
           </div>
-        </div>
-      `
-      .join("");
-  }
+        `
+        )
+        .join("")
+    : `<div class="muted">Nog geen status-updates.</div>`;
 
   result.style.display = "block";
 }
 
 async function runSearch() {
   if (!sb) {
-    setMsg("Supabase client ontbreekt. Controleer supabase-config.js + CDN.", true);
-    console.error("window.supabaseClient is undefined");
+    setMsg("Supabase client ontbreekt.", true);
     return;
   }
 
-  const code = (trackInput.value || "").trim().toUpperCase();
+  const code = trackInput.value.trim().toUpperCase();
   if (!code) {
     setMsg("Vul een trackcode in.", true);
     return;
   }
 
-  setMsg("Zoeken...");
+  setMsg("Zoeken…");
+
   try {
     const data = await loadByTrackCode(code);
     if (!data) {
-      setMsg("Geen zending gevonden met deze trackcode.", true);
+      setMsg("Geen zending gevonden.", true);
       render(null);
       return;
     }
+
     setMsg("Gevonden ✅");
     render(data);
   } catch (e) {
     console.error(e);
-    setMsg("Fout: " + (e?.message || e), true);
-    render(null);
+    setMsg("Fout: " + e.message, true);
   }
 }
 
-/* Bindings */
 trackBtn.addEventListener("click", runSearch);
 trackInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") runSearch();
 });
-
-/* Auto: ?code=DVK12345 */
-(function preloadFromUrl() {
-  const url = new URL(window.location.href);
-  const code = (url.searchParams.get("code") || "").trim();
-  if (code) {
-    trackInput.value = code;
-    runSearch();
-  }
-})();
