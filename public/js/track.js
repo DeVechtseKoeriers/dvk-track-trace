@@ -1,222 +1,244 @@
-/* ==========================================================
-   DVK – Track & Trace (public) + Realtime
-   Bestand: dvk-track-trace/public/js/track.js
-========================================================== */
-
-console.log("track.js loaded ✅");
-
-const sb = window.supabaseClient;
-
-/* DOM */
-const trackInput = document.getElementById("trackInput");
-const trackBtn = document.getElementById("trackBtn");
-const msg = document.getElementById("msg");
-
-const result = document.getElementById("result");
-const customer = document.getElementById("customer");
-const statusBadge = document.getElementById("statusBadge");
-const timeline = document.getElementById("timeline");
-
-/* Realtime state */
-let rtChannel = null;
-let currentShipmentId = null;
-let currentTrackCode = null;
-
-function setMsg(text, isError = false) {
-  msg.textContent = text || "";
-  msg.style.color = isError ? "#ffb4b4" : "";
-}
-
-function fmtDT(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("nl-NL");
-}
-
-function badgeClass(status) {
-  const s = String(status || "").toLowerCase();
-  if (s === "created") return "badge b-created";
-  if (s === "en_route") return "badge b-en_route";
-  if (s === "delivered") return "badge b-delivered";
-  if (s === "problem") return "badge b-problem";
-  return "badge";
-}
-
-async function loadByTrackCode(code) {
-  // 1) Shipment
-  const { data: shipment, error: shipErr } = await sb
-    .from("shipments")
-    .select("id, status, customer_name, created_at, track_code")
-    .eq("track_code", code)
-    .maybeSingle();
-
-  if (shipErr) throw shipErr;
-  if (!shipment) return null;
-
-  // 2) Events
-  const { data: events, error: evErr } = await sb
-    .from("shipment_events")
-    .select("id, shipment_id, event_type, note, created_at")
-    .eq("shipment_id", shipment.id)
-    .order("created_at", { ascending: false });
-
-  if (evErr) throw evErr;
-
-  return { shipment, events: events || [] };
-}
-
-function render(data) {
-  if (!data) {
-    result.style.display = "none";
+// public/js/track.js
+(() => {
+  const sb = window.supabaseClient;
+  if (!sb) {
+    console.error("Geen Supabase client. Check supabase-config.js");
     return;
   }
 
-  const { shipment, events } = data;
+  const elInput = document.getElementById("trackInput");
+  const elBtn = document.getElementById("searchBtn");
+  const elStatus = document.getElementById("statusLine");
+  const elResult = document.getElementById("resultCard");
+  const elShipMeta = document.getElementById("shipMeta");
+  const elShipBadge = document.getElementById("shipBadge");
+  const elTimeline = document.getElementById("timeline");
 
-  customer.textContent = shipment.customer_name ? `Klant: ${shipment.customer_name}` : "";
+  let currentShipment = null;
+  let channel = null;
 
-  statusBadge.className = badgeClass(shipment.status);
-  statusBadge.textContent = shipment.status || "-";
+  const STATUS_UI = {
+    created:   { label: "Aangemeld",   kind: "neutral" },
+    en_route:  { label: "Onderweg",    kind: "warn" },
+    delivered: { label: "Afgeleverd",  kind: "ok" },
+    problem:   { label: "Probleem",    kind: "bad" },
+  };
 
-  timeline.innerHTML = events.length
-    ? [...events]
-        .reverse()
-        .map(
-          (e) => `
-          <div class="event">
-            <div class="${badgeClass(e.event_type)}">${e.event_type}</div>
-            <div class="muted">${fmtDT(e.created_at)}</div>
-            <div>${e.note || ""}</div>
-          </div>
-        `
-        )
-        .join("")
-    : `<div class="muted">Nog geen status-updates.</div>`;
+  function setStatus(text, kind = "") {
+    elStatus.className = "statusline";
+    if (kind) elStatus.classList.add(kind);
+    elStatus.textContent = text || "";
+  }
 
-  result.style.display = "block";
-}
-
-/* ---------------------------
-   Realtime helpers
----------------------------- */
-
-async function stopRealtime() {
-  if (rtChannel) {
+  function fmtDate(iso) {
     try {
-      await rtChannel.unsubscribe();
-    } catch (_) {}
-    rtChannel = null;
-  }
-  currentShipmentId = null;
-  currentTrackCode = null;
-}
-
-async function refreshCurrent() {
-  // Herlaad alles “vers” op basis van trackcode (simpel & betrouwbaar)
-  if (!currentTrackCode) return;
-  try {
-    const data = await loadByTrackCode(currentTrackCode);
-    if (data) render(data);
-  } catch (e) {
-    console.warn("refreshCurrent failed:", e?.message);
-  }
-}
-
-function startRealtimeForShipment(shipmentId) {
-  // stop oude channel
-  if (rtChannel) {
-    rtChannel.unsubscribe().catch(() => {});
-    rtChannel = null;
+      const d = new Date(iso);
+      return new Intl.DateTimeFormat("nl-NL", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d);
+    } catch {
+      return iso || "";
+    }
   }
 
-  currentShipmentId = shipmentId;
+  function normalizeCode(v) {
+    return (v || "").trim().toUpperCase();
+  }
 
-  // Channel per zending
-  rtChannel = sb
-    .channel(`public-track-${shipmentId}`)
-    // 1) Nieuwe/gewijzigde events
-    .on(
+  function clearUI() {
+    currentShipment = null;
+    elResult.style.display = "none";
+    elShipMeta.textContent = "";
+    elShipBadge.textContent = "—";
+    elShipBadge.className = "badge neutral";
+    elTimeline.innerHTML = "";
+  }
+
+  function badgeFromEventType(eventType) {
+    const key = (eventType || "").toLowerCase();
+    const def = STATUS_UI[key] || { label: key || "Onbekend", kind: "neutral" };
+    elShipBadge.textContent = def.label;
+    elShipBadge.className = `badge ${def.kind}`;
+  }
+
+  function renderTimeline(events) {
+    // events verwacht: oplopend op created_at
+    elTimeline.innerHTML = "";
+
+    if (!events || events.length === 0) {
+      const div = document.createElement("div");
+      div.className = "tl-item";
+      div.innerHTML = `<div class="tl-left">
+          <div class="tl-title">Nog geen events</div>
+          <div class="tl-note">Wacht op eerste status-update</div>
+        </div>
+        <div class="tl-time">—</div>`;
+      elTimeline.appendChild(div);
+      return;
+    }
+
+    // dedupe op (event_type + created_at + note) om rommel te vermijden
+    const seen = new Set();
+
+    for (const e of events) {
+      const sig = `${e.event_type}|${e.created_at}|${e.note || ""}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+
+      const key = (e.event_type || "").toLowerCase();
+      const ui = STATUS_UI[key] || { label: key || "Onbekend", kind: "neutral" };
+
+      const div = document.createElement("div");
+      div.className = "tl-item";
+      div.innerHTML = `
+        <div class="tl-left">
+          <div class="tl-title">${ui.label}</div>
+          <div class="tl-note">${(e.note || "").trim() || "—"}</div>
+        </div>
+        <div class="tl-time">${fmtDate(e.created_at)}</div>
+      `;
+      elTimeline.appendChild(div);
+    }
+
+    // laatste event bepaalt badge (dus delivered wint)
+    const last = events[events.length - 1];
+    badgeFromEventType(last?.event_type);
+  }
+
+  async function fetchShipmentByCode(code) {
+    // Let op: jouw kolom heet _code (zie jouw screenshots)
+    const { data, error } = await sb
+      .from("shipments")
+      .select("id, _code, status, customer_name, created_at")
+      .eq("_code", code)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function fetchEventsForShipment(shipmentId) {
+    const { data, error } = await sb
+      .from("shipment_events")
+      .select("id, shipment_id, event_type, note, created_at")
+      .eq("shipment_id", shipmentId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function unsubscribeRealtime() {
+    try {
+      if (channel) {
+        await sb.removeChannel(channel);
+        channel = null;
+      }
+    } catch (e) {
+      console.warn("unsubscribeRealtime failed", e);
+    }
+  }
+
+  async function subscribeRealtime(shipmentId) {
+    await unsubscribeRealtime();
+
+    channel = sb.channel(`track-events-${shipmentId}`);
+
+    channel.on(
       "postgres_changes",
       {
-        event: "*",
+        event: "INSERT",
         schema: "public",
         table: "shipment_events",
         filter: `shipment_id=eq.${shipmentId}`,
       },
-      async () => {
-        // Zodra er iets verandert -> refresh UI
-        await refreshCurrent();
+      async (payload) => {
+        // Bij nieuwe event: opnieuw events ophalen (simpel en betrouwbaar)
+        try {
+          const events = await fetchEventsForShipment(shipmentId);
+          renderTimeline(events);
+          setStatus("Gevonden ✅ (realtime actief)", "ok");
+        } catch (e) {
+          console.error(e);
+          setStatus("Realtime update fout (events ophalen)", "warn");
+        }
       }
-    )
-    // 2) Shipment status wijziging (bijv. delivered)
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "shipments",
-        filter: `id=eq.${shipmentId}`,
-      },
-      async () => {
-        await refreshCurrent();
+    );
+
+    const { error } = await channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        // ok
       }
-    )
-    .subscribe((status) => {
-      // status kan zijn: SUBSCRIBED, TIMED_OUT, CLOSED, CHANNEL_ERROR
-      console.log("Realtime status:", status);
     });
-}
 
-/* ---------------------------
-   UI acties
----------------------------- */
-
-async function runSearch() {
-  if (!sb) {
-    setMsg("Supabase client ontbreekt.", true);
-    return;
+    if (error) {
+      console.error(error);
+      setStatus("Realtime subscription mislukt", "warn");
+    }
   }
 
-  const code = trackInput.value.trim().toUpperCase();
-  if (!code) {
-    setMsg("Vul een trackcode in.", true);
-    return;
-  }
+  async function runSearch() {
+    const code = normalizeCode(elInput.value);
 
-  setMsg("Zoeken…");
-  result.style.display = "none";
-
-  // stop realtime van vorige zoekactie
-  await stopRealtime();
-
-  try {
-    const data = await loadByTrackCode(code);
-    if (!data) {
-      setMsg("Geen zending gevonden.", true);
-      render(null);
+    if (!code) {
+      clearUI();
+      setStatus("Vul een trackcode in.", "warn");
       return;
     }
 
-    // Bewaar “context” voor realtime refresh
-    currentTrackCode = code;
+    setStatus("Zoeken…", "");
+    clearUI();
 
-    setMsg("Gevonden ✅ (realtime actief)");
-    render(data);
+    try {
+      const shipment = await fetchShipmentByCode(code);
 
-    // Start realtime
-    startRealtimeForShipment(data.shipment.id);
-  } catch (e) {
-    console.error(e);
-    setMsg("Fout: " + e.message, true);
+      if (!shipment) {
+        setStatus("Niet gevonden ❌ (controleer de code)", "bad");
+        return;
+      }
+
+      currentShipment = shipment;
+
+      // meta
+      elShipMeta.textContent =
+        `Klant: ${shipment.customer_name || "—"} • Aangemaakt: ${fmtDate(shipment.created_at)}`;
+
+      // events
+      const events = await fetchEventsForShipment(shipment.id);
+
+      // als er nog geen events zijn: toon status uit shipments.status als badge
+      if (!events || events.length === 0) {
+        badgeFromEventType(shipment.status);
+        renderTimeline([]);
+      } else {
+        renderTimeline(events);
+      }
+
+      elResult.style.display = "block";
+      setStatus("Gevonden ✅ (realtime actief)", "ok");
+
+      // realtime
+      await subscribeRealtime(shipment.id);
+    } catch (e) {
+      console.error(e);
+      setStatus("Fout bij laden (check console)", "bad");
+    }
   }
-}
 
-trackBtn.addEventListener("click", runSearch);
-trackInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") runSearch();
-});
+  // Events
+  elBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    runSearch();
+  });
 
-// netjes opruimen bij pagina verlaten
-window.addEventListener("beforeunload", () => {
-  if (rtChannel) rtChannel.unsubscribe().catch(() => {});
-});
+  elInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runSearch();
+  });
+
+  // Kleine default (optioneel)
+  // elInput.value = "DVK12345";
+})();
