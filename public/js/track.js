@@ -1,25 +1,30 @@
 /* public/js/track.js
-   DVK Track & Trace – Stap A: status komt uit LAATSTE event (shipment_events)
+   Klant Track & Trace: zoeken op track_code + realtime updates
+   Vereist: window.supabaseClient (uit supabase-config.js)
 */
 
 (function () {
   const sb = window.supabaseClient;
   if (!sb) {
-    console.error("supabaseClient ontbreekt. Check supabase-config.js include/pad.");
+    console.error("supabaseClient ontbreekt. Check supabase-config.js");
     return;
   }
 
-  // --- UI hooks (moeten bestaan in track/index.html) ---
+  // DOM
   const trackInput = document.getElementById("trackInput");
   const searchBtn = document.getElementById("searchBtn");
   const statusMsg = document.getElementById("statusMsg");
-  const result = document.getElementById("result");
+  const resultEl = document.getElementById("result");
 
-  // Realtime subscription refs (zodat we netjes kunnen vervangen)
-  let eventsChannel = null;
+  // NL labels (alleen dit tonen!)
+  const TYPE = {
+    created:  { title: "Aangemeld",  subtitle: "Zending aangemeld" },
+    en_route: { title: "Onderweg",   subtitle: "Chauffeur is onderweg" },
+    delivered:{ title: "Afgeleverd", subtitle: "Zending afgeleverd" },
+    problem:  { title: "Probleem",   subtitle: "Probleem gemeld" },
+  };
 
-  // --- Helpers ---
-  function esc(s) {
+  function escapeHtml(s) {
     return String(s ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
@@ -28,195 +33,167 @@
       .replaceAll("'", "&#039;");
   }
 
-  function setMsg(text, kind = "") {
+  function fmtDate(ts) {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString("nl-NL", { year:"numeric", month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit", second:"2-digit" });
+    } catch { return String(ts); }
+  }
+
+  function setMsg(text, ok = true) {
     if (!statusMsg) return;
     statusMsg.textContent = text || "";
-    statusMsg.className = "msg" + (kind ? ` ${kind}` : "");
+    statusMsg.style.color = ok ? "#22c55e" : "#ef4444";
   }
 
-  function formatDate(ts) {
-    if (!ts) return "";
-    const d = new Date(ts);
-    // NL stijl, zonder gedoe met locale issues
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getDate()}-${d.getMonth() + 1}-${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  function clearUI() {
+    if (resultEl) resultEl.innerHTML = "";
   }
 
-  // Event → nette tekst + “status”
-  function eventLabel(eventType) {
-    const t = String(eventType || "").toLowerCase();
-    if (t === "created") return "Zending aangemeld";
-    if (t === "en_route") return "Chauffeur is onderweg";
-    if (t === "delivered") return "Zending afgeleverd";
-    if (t === "problem") return "Probleem gemeld";
-    return eventType || "-";
-  }
-
-  // ✅ Stap A: LAATSTE event bepaalt status (voor klantweergave)
-  function displayStatusFromLatestEvent(latestEventType, fallbackShipmentStatus) {
-    const t = String(latestEventType || "").toLowerCase();
-
-    if (t === "delivered") return "Afgeleverd";
-    if (t === "en_route") return "Onderweg";
-    if (t === "created") return "Aangemeld";
-    if (t === "problem") return "Probleem";
-
-    // fallback: shipments.status (als er nog geen events zijn)
-    const s = String(fallbackShipmentStatus || "").toLowerCase();
-    if (s === "delivered") return "Afgeleverd";
-    if (s === "en_route") return "Onderweg";
-    if (s === "created") return "Aangemeld";
-    if (s === "problem") return "Probleem";
-    return fallbackShipmentStatus || "-";
-  }
-
-  // Bouw timeline HTML (simpel, stap B maken we mooier)
-  function renderTimeline(events) {
-    if (!events || events.length === 0) {
-      return `<div class="muted">Geen events gevonden.</div>`;
+  // Realtime subscription (per shipment)
+  let channel = null;
+  function stopRealtime() {
+    if (channel) {
+      sb.removeChannel(channel);
+      channel = null;
     }
-
-    // events: oud -> nieuw
-    return events
-      .map((e) => {
-        const left = `<div><strong>${esc(e.event_type)}</strong><br>${esc(eventLabel(e.event_type))}</div>`;
-        const right = `<div style="text-align:right">${esc(formatDate(e.created_at))}</div>`;
-        return `<div class="row" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08)">${left}${right}</div>`;
-      })
-      .join("");
   }
 
-  function detachRealtime() {
-    try {
-      if (eventsChannel) sb.removeChannel(eventsChannel);
-    } catch (e) {}
-    eventsChannel = null;
-  }
+  function renderShipment(shipment, events) {
+    // Bepaal “hoofdstaat” in NL (geen codes tonen)
+    const statusKey = shipment?.status || "created";
+    const statusMeta = TYPE[statusKey] || { title: "Status", subtitle: "" };
 
-  async function fetchShipmentByTrackCode(trackCode) {
-    // Let op: jouw kolom heet track_code (dat zagen we in Supabase screenshot)
-    const { data, error } = await sb
-      .from("shipments")
-      .select("id, track_code, status, customer_name, created_at")
-      .eq("track_code", trackCode)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data; // kan null zijn
-  }
-
-  async function fetchEventsByShipmentId(shipmentId) {
-    const { data, error } = await sb
-      .from("shipment_events")
-      .select("id, shipment_id, event_type, note, created_at")
-      .eq("shipment_id", shipmentId)
-      .order("created_at", { ascending: true });
-
-    if (error) throw error;
-    return data || [];
-  }
-
-  function renderShipmentCard({ shipment, events }) {
-    const latest = (events && events.length) ? events[events.length - 1] : null;
-
-    const displayStatus = displayStatusFromLatestEvent(
-      latest?.event_type,
-      shipment?.status
+    // Events sorteren
+    const sorted = (events || []).slice().sort((a, b) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     );
 
-    const header = `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-        <div>
-          <div style="font-weight:800;font-size:18px">Zending gevonden</div>
-          <div class="muted">Klant: ${esc(shipment.customer_name || "Onbekend")}</div>
-          <div class="muted">Trackcode: ${esc(shipment.track_code || "")}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-weight:800">${esc(displayStatus)}</div>
-          <div class="muted">${esc(shipment.status || "")}</div>
-        </div>
-      </div>
-    `;
+    // Timeline HTML (alleen NL)
+    const timelineHtml = sorted.length
+      ? sorted.map(ev => {
+          const meta = TYPE[ev.event_type] || { title: "Update", subtitle: "" };
+          const note = ev.note ? `<div class="muted">Ontvangen door: ${escapeHtml(ev.note)}</div>` : "";
+          return `
+            <div class="tl-item">
+              <div class="tl-left">
+                <div class="tl-title">${escapeHtml(meta.title)}</div>
+                <div class="tl-sub">${escapeHtml(meta.subtitle)}</div>
+                ${note}
+              </div>
+              <div class="tl-time">${escapeHtml(fmtDate(ev.created_at))}</div>
+            </div>
+          `;
+        }).join("")
+      : `<div class="muted">Geen events gevonden.</div>`;
 
-    const timeline = `
-      <div style="margin-top:12px;font-weight:800">Timeline</div>
-      <div id="timeline" class="timeline" style="margin-top:6px">
-        ${renderTimeline(events)}
-      </div>
-    `;
+    // Resultaatkaart (simpel, past bij jouw layout)
+    resultEl.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="h">Zending gevonden</div>
+            <div class="muted">Klant: ${escapeHtml(shipment.customer_name || "-")}</div>
+            <div class="muted">Trackcode: ${escapeHtml(shipment.track_code || "-")}</div>
+          </div>
+          <div class="badge">${escapeHtml(statusMeta.title)}</div>
+        </div>
 
-    result.innerHTML = `
-      <div class="card" style="padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(15,26,44,.35)">
-        ${header}
-        ${timeline}
+        <div class="sep"></div>
+
+        <div class="h">Timeline</div>
+        <div class="timeline">
+          ${timelineHtml}
+        </div>
       </div>
     `;
   }
 
-  async function enableRealtimeForShipment(shipmentId, trackCode) {
-    detachRealtime();
+  async function loadByTrackCode(trackCode) {
+    const code = String(trackCode || "").trim();
+    if (!code) {
+      setMsg("Vul een trackcode in.", false);
+      return;
+    }
 
-    // ✅ luister op shipment_events voor dit shipment
-    eventsChannel = sb
-      .channel(`track-events-${shipmentId}`)
+    setMsg("Zoeken...", true);
+    clearUI();
+    stopRealtime();
+
+    // 1) Shipment ophalen
+    const { data: shipments, error: shipErr } = await sb
+      .from("shipments")
+      .select("id, track_code, status, customer_name, created_at")
+      .eq("track_code", code)
+      .limit(1);
+
+    if (shipErr) {
+      console.error(shipErr);
+      setMsg("Fout bij laden (check console)", false);
+      return;
+    }
+
+    const shipment = shipments?.[0];
+    if (!shipment) {
+      setMsg("Niet gevonden.", false);
+      return;
+    }
+
+    // 2) Events ophalen
+    const { data: events, error: evErr } = await sb
+      .from("shipment_events")
+      .select("id, shipment_id, event_type, note, created_at")
+      .eq("shipment_id", shipment.id)
+      .order("created_at", { ascending: true });
+
+    if (evErr) {
+      console.error(evErr);
+      setMsg("Fout bij laden events (check console)", false);
+      return;
+    }
+
+    renderShipment(shipment, events);
+    setMsg("Gevonden ✅ (realtime actief)", true);
+
+    // 3) Realtime: events + shipment status
+    channel = sb
+      .channel("track-" + shipment.id)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "shipment_events",
-          filter: `shipment_id=eq.${shipmentId}`,
-        },
+        { event: "*", schema: "public", table: "shipment_events", filter: `shipment_id=eq.${shipment.id}` },
         async () => {
-          // bij event update/insert: opnieuw events ophalen en UI updaten (status komt automatisch mee via Stap A)
-          try {
-            const shipment = await fetchShipmentByTrackCode(trackCode);
-            const events = await fetchEventsByShipmentId(shipmentId);
-            setMsg("Gevonden ✅ (realtime actief)", "ok");
-            renderShipmentCard({ shipment, events });
-          } catch (e) {
-            console.error(e);
-          }
+          // herlaad events + shipment (veilig, simpel)
+          const [{ data: s2 }, { data: e2 }] = await Promise.all([
+            sb.from("shipments").select("id, track_code, status, customer_name, created_at").eq("id", shipment.id).limit(1),
+            sb.from("shipment_events").select("id, shipment_id, event_type, note, created_at").eq("shipment_id", shipment.id).order("created_at", { ascending: true }),
+          ]);
+
+          renderShipment(s2?.[0] || shipment, e2 || []);
+          setMsg("Gevonden ✅ (realtime actief)", true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shipments", filter: `id=eq.${shipment.id}` },
+        async () => {
+          const [{ data: s2 }, { data: e2 }] = await Promise.all([
+            sb.from("shipments").select("id, track_code, status, customer_name, created_at").eq("id", shipment.id).limit(1),
+            sb.from("shipment_events").select("id, shipment_id, event_type, note, created_at").eq("shipment_id", shipment.id).order("created_at", { ascending: true }),
+          ]);
+
+          renderShipment(s2?.[0] || shipment, e2 || []);
+          setMsg("Gevonden ✅ (realtime actief)", true);
         }
       )
       .subscribe();
   }
 
+  // UI bindings
   async function runSearch() {
-    const code = (trackInput?.value || "").trim();
-    if (!code) {
-      setMsg("Vul een trackcode in.", "warn");
-      return;
-    }
-
-    setMsg("Zoeken…", "warn");
-    result.innerHTML = "";
-
-    try {
-      const shipment = await fetchShipmentByTrackCode(code);
-
-      if (!shipment) {
-        detachRealtime();
-        setMsg("Niet gevonden ❌", "bad");
-        result.innerHTML = "";
-        return;
-      }
-
-      const events = await fetchEventsByShipmentId(shipment.id);
-
-      // ✅ Stap A: status komt uit laatste event (in renderShipmentCard)
-      setMsg("Gevonden ✅ (realtime actief)", "ok");
-      renderShipmentCard({ shipment, events });
-
-      await enableRealtimeForShipment(shipment.id, code);
-    } catch (err) {
-      detachRealtime();
-      console.error("Track error:", err);
-      setMsg("Fout bij laden (check console)", "bad");
-    }
+    const code = trackInput?.value || "";
+    await loadByTrackCode(code);
   }
 
-  // --- Events ---
   if (searchBtn) searchBtn.addEventListener("click", runSearch);
   if (trackInput) {
     trackInput.addEventListener("keydown", (e) => {
@@ -224,8 +201,6 @@
     });
   }
 
-  // auto-run als er al een waarde in input staat (handig bij testen)
-  if (trackInput && trackInput.value && trackInput.value.trim()) {
-    runSearch();
-  }
+  // Cleanup
+  window.addEventListener("beforeunload", () => stopRealtime());
 })();
