@@ -1,222 +1,191 @@
-// public/js/dashboard.js
-(() => {
-  const supabase = window.supabaseClient;
+// /public/js/dashboard.js
+(function () {
+  const sb = window.sb;
+  if (!sb) return;
 
-  const el = (id) => document.getElementById(id);
+  const elWho = document.getElementById("who");
+  const elLogout = document.getElementById("logoutBtn");
 
-  const userEmail = el("userEmail");
-  const logoutBtn = el("logoutBtn");
-  const dashMsg = el("dashMsg");
-  const shipmentsList = el("shipmentsList");
+  const elName = document.getElementById("customerName");
+  const elAddress = document.getElementById("customerAddress");
+  const elPhone = document.getElementById("customerPhone");
+  const elColli = document.getElementById("colliCount");
+  const elKg = document.getElementById("weightKg");
+  const elStart = document.getElementById("startStatus");
+  const elCreateBtn = document.getElementById("createBtn");
+  const elCreateMsg = document.getElementById("createMsg");
 
-  const toggleCreateBtn = el("toggleCreateBtn");
-  const createBox = el("createBox");
-  const cancelCreateBtn = el("cancelCreateBtn");
-  const createBtn = el("createBtn");
+  const elList = document.getElementById("list");
 
-  const customerNameInput = el("customerNameInput");
-  const startStatusSelect = el("startStatusSelect");
-
-  // F3 velden
-  const colliInput = el("colliInput");
-  const weightInput = el("weightInput");
-
-  const createMsg = el("createMsg");
-
-  function setMsg(target, text, type = "") {
-    target.className = "msg " + (type || "");
-    target.textContent = text || "";
+  function msg(t, ok = false) {
+    elCreateMsg.textContent = t;
+    elCreateMsg.style.color = ok ? "#22c55e" : "#ef4444";
   }
 
-  function yearNow() {
-    return new Date().getFullYear();
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (m) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+    }[m]));
   }
 
   async function requireAuth() {
-    const { data, error } = await supabase.auth.getUser();
-    if (error || !data?.user) {
+    const { data } = await sb.auth.getUser();
+    const user = data?.user;
+    if (!user) {
       window.location.href = "./login.html";
       return null;
     }
-    return data.user;
+    elWho.innerHTML = `<b>${esc(user.email || "")}</b>`;
+    return user;
   }
 
-  async function signOut() {
-    await supabase.auth.signOut();
+  async function logout() {
+    await sb.auth.signOut();
     window.location.href = "./login.html";
   }
 
-  // Trackcode generator: DVK-YYYY-0001
-  async function generateTrackCode() {
-    const y = yearNow();
+  elLogout.addEventListener("click", logout);
+
+  async function loadMyShipments() {
+    elList.innerHTML = "Laden...";
+
+    const { data, error } = await sb
+      .from("shipments")
+      .select("id, track_code, status, customer_name, colli_count, weight_kg, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      elList.innerHTML = `<span style="color:#ef4444;">Laden mislukt (RLS?). Check console.</span>`;
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      elList.innerHTML = `<div class="muted">Nog geen zendingen.</div>`;
+      return;
+    }
+
+    elList.innerHTML = data.map(s => `
+      <div class="tl-item">
+        <div><b>${esc(s.track_code)}</b> — ${esc(s.customer_name || "-")}</div>
+        <div class="muted">Status: ${esc(s.status)} • Colli: ${s.colli_count ?? "-"} • Kg: ${s.weight_kg ?? "-"}</div>
+      </div>
+    `).join("");
+  }
+
+  function yearStr() {
+    return String(new Date().getFullYear());
+  }
+
+  // simpele client-side teller (later beter via SQL function)
+  async function nextTrackCode() {
+    const y = yearStr();
     const prefix = `DVK-${y}-`;
 
-    // Haal hoogste bestaande code van dit jaar op
-    // track_code like DVK-2026-0001
-    const { data, error } = await supabase
+    const { data, error } = await sb
       .from("shipments")
       .select("track_code")
       .like("track_code", `${prefix}%`)
       .order("track_code", { ascending: false })
       .limit(1);
 
-    if (error) throw error;
-
-    let nextNr = 1;
-    if (data && data.length > 0 && data[0].track_code) {
-      const last = data[0].track_code;
-      const lastNum = parseInt(last.replace(prefix, ""), 10);
-      if (!Number.isNaN(lastNum)) nextNr = lastNum + 1;
-    }
-
-    const padded = String(nextNr).padStart(4, "0");
-    return `${prefix}${padded}`;
-  }
-
-  function statusLabel(code) {
-    const map = {
-      created: "Aangemeld",
-      en_route: "Onderweg",
-      delivered: "Afgeleverd",
-      problem: "Probleem"
-    };
-    return map[code] || code;
-  }
-
-  async function loadShipments(userId) {
-    // Toon zendingen van deze chauffeur
-    const { data, error } = await supabase
-      .from("shipments")
-      .select("id,track_code,status,customer_name,colli_count,weight_kg,created_at")
-      .eq("driver_id", userId)
-      .order("created_at", { ascending: false });
-
     if (error) {
       console.error(error);
-      setMsg(dashMsg, "Dashboard laden mislukt (check console / RLS).", "bad");
+      // fallback
+      return `${prefix}0001`;
+    }
+
+    const last = data?.[0]?.track_code;
+    if (!last) return `${prefix}0001`;
+
+    const m = String(last).match(/DVK-\d{4}-(\d{4})$/);
+    const n = m ? parseInt(m[1], 10) : 0;
+    const next = String(n + 1).padStart(4, "0");
+    return `${prefix}${next}`;
+  }
+
+  async function createShipment() {
+    msg("");
+
+    const { data: userData } = await sb.auth.getUser();
+    const driverId = userData?.user?.id;
+    if (!driverId) {
+      msg("Niet ingelogd.");
       return;
     }
 
-    setMsg(dashMsg, "Dashboard geladen ✅", "ok");
+    const customer_name = String(elName.value || "").trim();
+    const customer_address = String(elAddress.value || "").trim();
+    const customer_phone = String(elPhone.value || "").trim();
 
-    shipmentsList.innerHTML = "";
-    if (!data || data.length === 0) {
-      shipmentsList.innerHTML = `<div class="muted">Nog geen zendingen.</div>`;
+    const colli_count = elColli.value === "" ? null : parseInt(elColli.value, 10);
+    const weight_kg = elKg.value === "" ? null : parseFloat(elKg.value);
+
+    const status = elStart.value || "created";
+
+    if (!customer_name) {
+      msg("Vul klantnaam in.");
       return;
     }
 
-    for (const s of data) {
-      const colliTxt = s.colli_count ? ` • Colli: ${s.colli_count}` : "";
-      const kgTxt = s.weight_kg ? ` • Kg: ${s.weight_kg}` : "";
+    const track_code = await nextTrackCode();
 
-      const item = document.createElement("div");
-      item.className = "list-item";
-      item.innerHTML = `
-        <div style="font-weight:700;">${s.track_code}</div>
-        <div class="muted">${s.customer_name || "—"} • ${statusLabel(s.status)}${colliTxt}${kgTxt}</div>
-      `;
-      shipmentsList.appendChild(item);
-    }
-  }
+    // 1) shipment insert
+    const { data: ship, error: shipErr } = await sb
+      .from("shipments")
+      .insert([{
+        track_code,
+        status,
+        driver_id: driverId,
+        customer_name,
+        customer_address: customer_address || null,
+        customer_phone: customer_phone || null,
+        colli_count,
+        weight_kg
+      }])
+      .select("id, track_code")
+      .single();
 
-  async function createInitialEvent(shipmentId, status, note = null) {
-    // Maak event in shipment_events voor timeline
-    const payload = {
-      shipment_id: shipmentId,
-      event_type: status,
-      note: note || null
-    };
-
-    const { error } = await supabase.from("shipment_events").insert(payload);
-    if (error) throw error;
-  }
-
-  async function handleCreateShipment(user) {
-    setMsg(createMsg, "Bezig met aanmaken…", "warn");
-
-    const customerName = (customerNameInput.value || "").trim();
-    if (!customerName) {
-      setMsg(createMsg, "Vul klantnaam in.", "bad");
+    if (shipErr) {
+      console.error(shipErr);
+      msg("Aanmaken mislukt (check console / RLS).");
       return;
     }
 
-    const startStatus = startStatusSelect.value;
+    // 2) eerste event insert (NL note)
+    const nlNote =
+      status === "en_route" ? "Chauffeur is onderweg"
+      : "Zending aangemeld";
 
-    // F3: colli/kg lezen
-    const colli = colliInput.value ? parseInt(colliInput.value, 10) : null;
-    const weight = weightInput.value ? parseFloat(weightInput.value) : null;
+    const { error: evErr } = await sb
+      .from("shipment_events")
+      .insert([{
+        shipment_id: ship.id,
+        event_type: status,      // intern (created/en_route/etc)
+        note: nlNote
+      }]);
 
-    // basis validatie
-    if (colli !== null && (Number.isNaN(colli) || colli < 1)) {
-      setMsg(createMsg, "Aantal colli moet een getal >= 1 zijn.", "bad");
+    if (evErr) {
+      console.error(evErr);
+      msg("Zending aangemaakt maar event mislukt (RLS).");
       return;
     }
-    if (weight !== null && (Number.isNaN(weight) || weight < 0)) {
-      setMsg(createMsg, "Gewicht moet een geldig getal zijn.", "bad");
-      return;
-    }
 
-    try {
-      const trackCode = await generateTrackCode();
+    msg(`Aangemaakt ✅ Trackcode: ${ship.track_code}`, true);
+    elName.value = "";
+    elAddress.value = "";
+    elPhone.value = "";
+    elColli.value = "";
+    elKg.value = "";
 
-      // Insert shipment
-      const { data, error } = await supabase
-        .from("shipments")
-        .insert({
-          track_code: trackCode,
-          status: startStatus,
-          driver_id: user.id,
-          customer_name: customerName,
-          colli_count: colli,
-          weight_kg: weight
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-
-      // Maak timeline event aan
-      await createInitialEvent(data.id, startStatus, null);
-
-      setMsg(createMsg, `Zending aangemaakt ✅ Trackcode: ${trackCode}`, "ok");
-
-      // reset form
-      customerNameInput.value = "";
-      colliInput.value = "";
-      weightInput.value = "";
-      startStatusSelect.value = "created";
-
-      // refresh list
-      await loadShipments(user.id);
-    } catch (e) {
-      console.error(e);
-      setMsg(createMsg, "Aanmaken mislukt (check console / RLS).", "bad");
-    }
+    await loadMyShipments();
   }
 
-  function wireUI(user) {
-    userEmail.textContent = user.email || "";
-    logoutBtn.addEventListener("click", signOut);
+  elCreateBtn.addEventListener("click", createShipment);
 
-    toggleCreateBtn.addEventListener("click", () => {
-      createBox.style.display = createBox.style.display === "none" ? "block" : "none";
-    });
-
-    cancelCreateBtn.addEventListener("click", () => {
-      createBox.style.display = "none";
-      setMsg(createMsg, "");
-    });
-
-    createBtn.addEventListener("click", () => handleCreateShipment(user));
-  }
-
-  async function init() {
-    const user = await requireAuth();
-    if (!user) return;
-
-    wireUI(user);
-    await loadShipments(user.id);
-  }
-
-  init();
+  (async function init() {
+    const u = await requireAuth();
+    if (!u) return;
+    await loadMyShipments();
+  })();
 })();
