@@ -1,40 +1,237 @@
-<!doctype html>
-<html lang="nl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Track & Trace | De Vechtse Koeriers</title>
+/* public/js/track.js
+   Track & Trace (klant)
+   - zoekt shipment op track_code
+   - haalt timeline op uit shipment_events
+   - realtime via Supabase channel
+*/
 
-  <link rel="stylesheet" href="/dvk-track-trace/public/css/style.css" />
-</head>
-<body>
-  <div class="container">
-    <div class="brand">
-      <strong>De Vechtse Koeriers</strong>
-      <span>Track & Trace</span>
-    </div>
+(function () {
+  const sb = window.supabaseClient;
+  if (!sb) {
+    console.error("supabaseClient ontbreekt. Check supabase-config.js");
+    return;
+  }
 
-    <div class="card">
-      <h1>Volg je zending</h1>
-      <div class="muted">Vul je trackcode in (bijv. DVK12345)</div>
+  // --- DOM ---
+  const trackInput = document.getElementById("trackInput");
+  const searchBtn = document.getElementById("searchBtn");
+  const statusMsg = document.getElementById("statusMsg");
+  const result = document.getElementById("result");
 
-      <div class="sep"></div>
+  // --- Helpers ---
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-      <div class="row">
-        <input id="trackInput" placeholder="Bijv. DVK12345" autocomplete="off" />
-        <button id="searchBtn">Zoeken</button>
+  function fmtDate(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    // NL weergave, zonder gedoe met locale issues:
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getDate()}-${d.getMonth() + 1}-${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  const statusMap = {
+    created: { title: "Aangemeld", desc: "Zending aangemeld" },
+    en_route: { title: "Onderweg", desc: "Chauffeur is onderweg" },
+    delivered: { title: "Afgeleverd", desc: "Zending afgeleverd" },
+    problem: { title: "Probleem", desc: "Probleem gemeld" },
+  };
+
+  function statusLabel(code) {
+    return statusMap[code]?.title || (code ? String(code) : "");
+  }
+
+  function statusDesc(code) {
+    return statusMap[code]?.desc || "";
+  }
+
+  function setMsg(text, type = "") {
+    statusMsg.textContent = text || "";
+    statusMsg.className = "msg " + (type || "");
+  }
+
+  function clearUI() {
+    result.innerHTML = "";
+    setMsg("", "");
+  }
+
+  // --- State ---
+  let currentShipment = null;     // object uit shipments
+  let currentSub = null;          // realtime channel
+
+  // --- Render ---
+  function render(shipment, events) {
+    const statusCode = shipment?.status || "";
+    const statusNL = statusLabel(statusCode);
+
+    const headerHtml = `
+      <div class="ship-card">
+        <div class="ship-top">
+          <div>
+            <div class="ship-title">Zending gevonden</div>
+            <div class="muted">Klant: ${escapeHtml(shipment.customer_name || "")}</div>
+            <div class="muted">Trackcode: ${escapeHtml(shipment.track_code || "")}</div>
+          </div>
+          <div class="status-pill">
+            <div class="status-big">${escapeHtml(statusNL)}</div>
+            <div class="muted">${escapeHtml(statusNL)}</div>
+          </div>
+        </div>
+
+        <div class="sep" style="margin-top:12px;"></div>
+
+        <div style="font-weight:700; margin-top:10px;">Timeline</div>
+        <div id="timeline" class="timeline"></div>
       </div>
+    `;
 
-      <div id="statusMsg" class="msg"></div>
-      <div id="result" class="grid"></div>
-    </div>
-  </div>
+    result.innerHTML = headerHtml;
 
-  <!-- Supabase CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    const timelineEl = document.getElementById("timeline");
+    if (!timelineEl) return;
 
-  <!-- BELANGRIJK: absolute paden voor GitHub Pages -->
-  <script src="/dvk-track-trace/public/js/supabase-config.js"></script>
-  <script src="/dvk-track-trace/public/js/track.js"></script>
-</body>
-</html>
+    if (!events || events.length === 0) {
+      timelineEl.innerHTML = `<div class="muted">Geen events gevonden.</div>`;
+      return;
+    }
+
+    // sort op created_at (oud -> nieuw)
+    const sorted = [...events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    const itemsHtml = sorted.map((ev) => {
+      const title = statusLabel(ev.event_type);
+      const desc = statusDesc(ev.event_type);
+      const when = fmtDate(ev.created_at);
+
+      // ✅ “Ontvangen door” alleen bij Afgeleverd + alleen als note gevuld
+      const noteHtml =
+        (ev.event_type === "delivered" && ev.note && ev.note.trim())
+          ? `<div class="muted">Ontvangen door: ${escapeHtml(ev.note)}</div>`
+          : "";
+
+      return `
+        <div class="timeline-row">
+          <div class="tl-left">
+            <div class="tl-title">${escapeHtml(title)}</div>
+            <div class="muted">${escapeHtml(desc)}</div>
+            ${noteHtml}
+          </div>
+          <div class="tl-right muted">${escapeHtml(when)}</div>
+        </div>
+      `;
+    }).join("");
+
+    timelineEl.innerHTML = itemsHtml;
+  }
+
+  // --- Data loaders ---
+  async function fetchShipmentByTrackCode(trackCode) {
+    // LET OP: jouw kolom heet track_code (zie je screenshot)
+    const { data, error } = await sb
+      .from("shipments")
+      .select("id, track_code, status, customer_name, created_at")
+      .eq("track_code", trackCode)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  }
+
+  async function fetchEventsForShipment(shipmentId) {
+    const { data, error } = await sb
+      .from("shipment_events")
+      .select("id, shipment_id, event_type, note, created_at")
+      .eq("shipment_id", shipmentId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  // --- Realtime ---
+  function stopRealtime() {
+    if (currentSub) {
+      sb.removeChannel(currentSub);
+      currentSub = null;
+    }
+  }
+
+  function startRealtime(shipmentId) {
+    stopRealtime();
+
+    currentSub = sb
+      .channel(`shipment_events_${shipmentId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "shipment_events", filter: `shipment_id=eq.${shipmentId}` },
+        async () => {
+          // bij elke wijziging: events opnieuw ophalen en renderen
+          try {
+            if (!currentShipment) return;
+            const events = await fetchEventsForShipment(shipmentId);
+
+            // status in shipments kan ook wijzigen, dus ook shipment refetch:
+            const refreshed = await fetchShipmentByTrackCode(currentShipment.track_code);
+            if (refreshed) currentShipment = refreshed;
+
+            render(currentShipment, events);
+            setMsg("Gevonden ✅ (realtime actief)", "ok");
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      )
+      .subscribe();
+  }
+
+  // --- Main search ---
+  async function runSearch() {
+    const trackCode = (trackInput.value || "").trim();
+    clearUI();
+
+    if (!trackCode) {
+      setMsg("Vul een trackcode in.", "bad");
+      return;
+    }
+
+    try {
+      searchBtn.disabled = true;
+      setMsg("Zoeken…", "");
+
+      const shipment = await fetchShipmentByTrackCode(trackCode);
+      if (!shipment) {
+        stopRealtime();
+        setMsg("Geen zending gevonden met deze trackcode.", "bad");
+        return;
+      }
+
+      currentShipment = shipment;
+
+      const events = await fetchEventsForShipment(shipment.id);
+      render(shipment, events);
+
+      setMsg("Gevonden ✅ (realtime actief)", "ok");
+      startRealtime(shipment.id);
+    } catch (err) {
+      console.error(err);
+      stopRealtime();
+      setMsg("Fout bij laden (check console)", "bad");
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  // --- Events ---
+  searchBtn?.addEventListener("click", runSearch);
+  trackInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") runSearch();
+  });
+
+})();
