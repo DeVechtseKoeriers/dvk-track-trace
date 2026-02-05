@@ -2,41 +2,37 @@
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Track & Trace | De Vechtse Koeriers</title>
   <link rel="stylesheet" href="../public/css/style.css" />
 </head>
 
 <body>
-  <div class="container">
-    <div class="brand">
-      <div class="brand-title">De Vechtse Koeriers</div>
-      <div class="brand-sub">Track & Trace</div>
-    </div>
+  <main class="wrap">
+    <header class="brand">
+      <div class="brand__title">De Vechtse Koeriers</div>
+      <div class="brand__sub">Track & Trace</div>
+    </header>
 
-    <h1>Volg je zending</h1>
-    <p class="muted">Vul je trackcode in (bijv. DVK-001)</p>
+    <section class="card">
+      <h1>Volg je zending</h1>
+      <p class="muted">Vul je trackcode in (bijv. DVK-001)</p>
 
-    <div class="row">
-      <input id="trackInput" placeholder="Bijv. DVK-001" autocomplete="off" />
-      <button id="searchBtn">Zoeken</button>
-    </div>
+      <div class="row">
+        <input id="trackInput" placeholder="Bijv. DVK-001" autocomplete="off" />
+        <button id="searchBtn">Zoeken</button>
+      </div>
 
-    <div id="statusMsg" class="msg"></div>
-    <div id="result" class="grid"></div>
-
-    <div class="sep"></div>
-    <div style="font-weight:700;margin-top:10px;">Timeline</div>
-    <div id="timeline" class="timeline"></div>
-  </div>
+      <div id="statusMsg" class="msg"></div>
+      <div id="result" class="grid"></div>
+    </section>
+  </main>
 
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Config (we zitten in /track/, dus 1 map terug) -->
+  <!-- LET OP: we zitten in /track/ dus 1 map terug -->
   <script src="../public/js/supabase-config.js"></script>
-
-  <!-- Track logic -->
   <script src="../public/js/track.js"></script>
 </body>
 </html>
