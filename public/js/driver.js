@@ -1,83 +1,117 @@
-/* public/js/driver.js
-   Chauffeur dashboard: status zetten + event loggen
-   Vereist: window.supabaseClient (uit supabase-config.js)
-*/
+// =====================================================
+// DVK – Chauffeur Login
+// Bestand: /public/js/driver.js
+// Vereist: window.supabaseClient (uit supabase-config.js)
+// Gebruikt in: /driver/login.html
+// =====================================================
 
 (function () {
   const sb = window.supabaseClient;
   if (!sb) {
-    console.error("supabaseClient ontbreekt. Check supabase-config.js");
+    console.error("[DVK] Supabase client ontbreekt. Check supabase-config.js");
     return;
   }
 
-  // --- Helpers
-  function $(id) { return document.getElementById(id); }
+  const $ = (id) => document.getElementById(id);
 
-  // Status labels (NL) voor weergave (optioneel in UI)
-  const STATUS_LABEL_NL = {
-    created: "Aangemeld",
-    en_route: "Onderweg",
-    delivered: "Afgeleverd",
-    problem: "Probleem",
-  };
+  const form = $("loginForm");
+  const emailEl = $("email");
+  const passEl = $("password");
+  const btnEl = $("loginBtn");
+  const msgEl = $("msg");
 
-  // --- VEREIST: je driver dashboard heeft ergens shipment cards met knoppen
-  // In jouw repo werd status vaak via data-attributes gezet.
-  // Dit script verwacht knoppen met: data-action="setStatus" data-status="created|en_route|delivered|problem"
-  // en een parent element met data-shipment-id="UUID"
-  document.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-action='setStatus']");
-    if (!btn) return;
+  // GitHub Pages project-site base path (bv. /dvk-track-trace)
+  function basePath() {
+    const parts = location.pathname.split("/").filter(Boolean);
+    return parts.length ? "/" + parts[0] : "";
+  }
 
-    const newStatus = btn.getAttribute("data-status");
-    const card = btn.closest("[data-shipment-id]");
-    const shipmentId = card?.getAttribute("data-shipment-id");
+  function to(path) {
+    return location.origin + basePath() + path;
+  }
 
-    if (!shipmentId || !newStatus) return;
+  function showMsg(text, type = "ok") {
+    if (!msgEl) return;
+    msgEl.style.display = "block";
+    msgEl.textContent = text || "";
+    msgEl.className = "msg " + (type === "bad" ? "bad" : type === "warn" ? "warn" : "ok");
+  }
 
-    btn.disabled = true;
+  function hideMsg() {
+    if (!msgEl) return;
+    msgEl.style.display = "none";
+    msgEl.textContent = "";
+    msgEl.className = "msg";
+  }
+
+  function setDisabled(disabled) {
+    if (btnEl) btnEl.disabled = disabled;
+    if (emailEl) emailEl.disabled = disabled;
+    if (passEl) passEl.disabled = disabled;
+  }
+
+  async function redirectIfLoggedIn() {
+    try {
+      const { data, error } = await sb.auth.getSession();
+      if (error) throw error;
+      if (data?.session) {
+        location.href = to("/driver/dashboard.html");
+      }
+    } catch (e) {
+      console.error("[DVK] Session check error", e);
+      // geen harde actie; user kan nog gewoon inloggen
+    }
+  }
+
+  async function doLogin(email, password) {
+    showMsg("Bezig met inloggen…", "warn");
+    setDisabled(true);
 
     try {
-      let note = null;
+      const { data, error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
 
-      if (newStatus === "problem") {
-        note = prompt("Wat is het probleem? (optioneel)") || null;
+      if (data?.session) {
+        showMsg("Ingelogd ✅", "ok");
+        location.href = to("/driver/dashboard.html");
+      } else {
+        showMsg("Inloggen gelukt maar geen sessie ontvangen.", "bad");
       }
+    } catch (e) {
+      console.error("[DVK] Login error", e);
 
-      // ✅ NIEUW: bij Afgeleverd vragen “aan wie”
-      if (newStatus === "delivered") {
-        note = prompt("Aan wie is het afgeleverd? (naam, optioneel)") || null;
-      }
+      // Meer behulpzame foutmelding
+      const msg =
+        (e?.message || "").toLowerCase().includes("invalid login credentials")
+          ? "Onjuiste e-mail of wachtwoord."
+          : "Inloggen mislukt. Check Supabase URL/Key en Auth instellingen.";
 
-      // 1) Update hoofdstatus in shipments
-      const { error: upErr } = await sb
-        .from("shipments")
-        .update({ status: newStatus })
-        .eq("id", shipmentId);
-
-      if (upErr) throw upErr;
-
-      // 2) Log event in shipment_events
-      const { error: insErr } = await sb
-        .from("shipment_events")
-        .insert([{
-          shipment_id: shipmentId,
-          event_type: newStatus,
-          note: note,
-        }]);
-
-      if (insErr) throw insErr;
-
-      // Optioneel: direct UI bijwerken
-      const statusEl = card.querySelector("[data-role='statusLabel']");
-      if (statusEl) statusEl.textContent = STATUS_LABEL_NL[newStatus] || newStatus;
-
-      console.log("Status bijgewerkt:", shipmentId, newStatus, note);
-    } catch (err) {
-      console.error(err);
-      alert("Kon status niet opslaan. Check console.");
+      showMsg(msg, "bad");
     } finally {
-      btn.disabled = false;
+      setDisabled(false);
     }
-  });
+  }
+
+  // Wire up
+  if (form) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      hideMsg();
+
+      const email = (emailEl?.value || "").trim();
+      const password = passEl?.value || "";
+
+      if (!email || !password) {
+        showMsg("Vul e-mail en wachtwoord in.", "warn");
+        return;
+      }
+
+      doLogin(email, password);
+    });
+  } else {
+    console.warn("[DVK] loginForm niet gevonden. Check driver/login.html id's.");
+  }
+
+  // Init
+  redirectIfLoggedIn();
 })();
