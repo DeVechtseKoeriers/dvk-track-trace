@@ -1,62 +1,98 @@
-const supabase = window.supabase.createClient(
-  window.DVK_SUPABASE_URL,
-  window.DVK_SUPABASE_ANON_KEY
-);
+// =====================================================
+// DVK - app.js (router/boot)
+// Bestand: /public/js/app.js
+// Doel: start juiste code op de juiste pagina
+// Vereist: window.supabaseClient uit supabase-config.js
+// =====================================================
 
-const btn = document.getElementById("btn");
-const codeInput = document.getElementById("code");
-const result = document.getElementById("result");
+(function () {
+  const sb = window.supabaseClient;
 
-function renderError(msg) {
-  result.innerHTML = `
-    <strong>Status</strong>
-    <div class="badge bad">${msg}</div>
-    <p class="small" style="margin-top:8px">Controleer de code en probeer opnieuw.</p>
-  `;
-}
+  function log(...args) {
+    console.log("[DVK]", ...args);
+  }
 
-function renderOk(status, note) {
-  const badge =
-    status === "delivered" ? "ok" :
-    status === "en_route" ? "warn" :
-    status === "picked_up" ? "warn" :
-    status === "created" ? "" : "";
+  function err(...args) {
+    console.error("[DVK]", ...args);
+  }
 
-  const label =
-    status === "delivered" ? "Afgeleverd" :
-    status === "en_route" ? "Onderweg" :
-    status === "picked_up" ? "Opgehaald" :
-    status === "created" ? "Aangemeld" : status;
+  // ---------- Guards ----------
+  if (!sb) {
+    err("Supabase client ontbreekt. Check public/js/supabase-config.js");
+    return;
+  }
 
-  result.innerHTML = `
-    <strong>Status</strong>
-    <div class="badge ${badge}">${label}</div>
-    <p class="small" style="margin-top:8px">${note || ""}</p>
-  `;
-}
+  // ---------- Helpers ----------
+  const $ = (id) => document.getElementById(id);
 
-async function lookupTrack(code) {
-  const { data: shipment, error } = await supabase
-    .from("shipments")
-    .select("id, status")
-    .eq("track_code", code)
-    .maybeSingle();
+  // GitHub Pages project-site base path (bv. /dvk-track-trace)
+  function basePath() {
+    // /dvk-track-trace/track/index.html -> /dvk-track-trace
+    const parts = location.pathname.split("/").filter(Boolean);
+    if (parts.length === 0) return "";
+    return "/" + parts[0];
+  }
 
-  if (error) return renderError("Fout bij ophalen");
-  if (!shipment) return renderError("Onbekende trackcode");
+  function urlTo(path) {
+    return location.origin + basePath() + path;
+  }
 
-  const { data: events } = await supabase
-    .from("shipment_events")
-    .select("note, created_at")
-    .eq("shipment_id", shipment.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
+  // ---------- Page detectors ----------
+  const isTrackPage = !!$("trackInput") && !!$("searchBtn");
+  const isLoginPage = !!$("loginForm") && !!$("email") && !!$("password");
+  const isDriverDashboard = !!$("logoutBtn") && !!$("shipmentsList");
 
-  renderOk(shipment.status, events?.[0]?.note || "Status bijgewerkt.");
-}
+  // ---------- Track boot (fallback) ----------
+  async function bootTrack() {
+    // Als jij track.js al gebruikt, doet die het werk.
+    // app.js checkt alleen basis en geeft debug-info.
+    log("Track page detected ✅");
+  }
 
-btn?.addEventListener("click", () => {
-  const code = (codeInput?.value || "").trim().toUpperCase();
-  if (!code) return renderError("Voer een trackcode in");
-  lookupTrack(code);
-});
+  // ---------- Login boot (fallback) ----------
+  async function bootLogin() {
+    log("Driver login page detected ✅");
+
+    // Als je login.html eigen inline script heeft, doet dat al het werk.
+    // Deze boot zorgt dat je niet “vast” zit als je al ingelogd bent.
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data?.session) {
+        location.href = urlTo("/driver/dashboard.html");
+      }
+    } catch (e) {
+      err("Login boot error", e);
+    }
+  }
+
+  // ---------- Driver dashboard boot (fallback) ----------
+  async function bootDriverDashboard() {
+    log("Driver dashboard detected ✅");
+
+    // Als dashboard.js al werkt, hoeft app.js niks te doen.
+    // Alleen guard: als je niet ingelogd bent -> terug naar login.
+    try {
+      const { data } = await sb.auth.getUser();
+      if (!data?.user) {
+        location.href = urlTo("/driver/login.html");
+      }
+    } catch (e) {
+      err("Dashboard boot error", e);
+      location.href = urlTo("/driver/login.html");
+    }
+  }
+
+  // ---------- Boot router ----------
+  (async function boot() {
+    try {
+      if (isTrackPage) return bootTrack();
+      if (isLoginPage) return bootLogin();
+      if (isDriverDashboard) return bootDriverDashboard();
+
+      // Als we niks herkennen
+      log("Geen bekende pagina gedetecteerd. (OK)");
+    } catch (e) {
+      err("App boot failed", e);
+    }
+  })();
+})();
