@@ -1,17 +1,48 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DVK Track & Trace</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Track & Trace | De Vechtse Koeriers</title>
+  <link rel="stylesheet" href="../public/css/style.css" />
 </head>
-<body>
-  <h1>DVK Track & Trace</h1>
-  <p>Project in opbouw</p>
 
-  <p>
-    <a href="/track/">📦 Track & Trace</a> |
-    <a href="/driver/login.html">🚚 Chauffeur login</a>
-  </p>
+<body>
+  <div class="container">
+    <div class="brand">
+      <div class="brand-title">De Vechtse Koeriers</div>
+      <div class="brand-sub">Track & Trace</div>
+    </div>
+
+    <div class="card">
+      <h1>Volg je zending</h1>
+      <div class="muted">Vul je trackcode in (bijv. DVK-2026-0001)</div>
+
+      <div class="row" style="margin-top:12px;">
+        <input id="trackInput" placeholder="Bijv. DVK-2026-0001" autocomplete="off" />
+        <button id="searchBtn" class="btn primary">Zoeken</button>
+      </div>
+
+      <div id="statusMsg" class="msg" style="margin-top:10px;"></div>
+
+      <div id="result" class="card inner" style="display:none; margin-top:12px;">
+        <div style="font-weight:700;">Zending gevonden</div>
+        <div id="foundInfo" class="muted" style="margin-top:6px;"></div>
+
+        <!-- F3: pakketgegevens -->
+        <div id="packageInfo" style="margin-top:10px;"></div>
+
+        <div style="margin-top:12px; font-weight:700;">Timeline</div>
+        <div id="timeline" class="timeline" style="margin-top:6px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Supabase CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Config -->
+  <script src="../public/js/supabase-config.js"></script>
+  <!-- Track logic -->
+  <script src="../public/js/track.js"></script>
 </body>
 </html>
