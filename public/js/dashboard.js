@@ -1,10 +1,9 @@
 /* /public/js/dashboard.js
-   Stap D: Chauffeur dashboard met dropdown + velden (geen prompts)
-   - laadt shipments voor ingelogde driver (auth.uid())
-   - status kiezen via dropdown
-   - bij delivered: veld "Ontvangen door"
-   - bij problem: veld "Probleem / opmerking"
-   - opslaan: update shipments.status + insert shipment_events(event_type,status,note)
+   Chauffeur Dashboard:
+   - lijst zendingen (driver_id = auth.uid())
+   - status wijzigen via dropdown + velden
+   - ✅ F1: nieuwe zending aanmaken (track_code leeg -> trigger maakt DVK-YYYY-0001)
+   - maakt direct een shipment_event aan bij aanmaken
 */
 
 (function () {
@@ -14,15 +13,30 @@
     return;
   }
 
+  // ---- DOM ----
   const shipmentsEl = document.getElementById("shipments");
   const statusMsgEl = document.getElementById("statusMsg");
   const whoamiEl = document.getElementById("whoami");
   const logoutBtn = document.getElementById("logoutBtn");
 
+  // F1 UI
+  const newShipmentBtn = document.getElementById("newShipmentBtn");
+  const newShipmentPanel = document.getElementById("newShipmentPanel");
+  const newCustomerName = document.getElementById("newCustomerName");
+  const newStatus = document.getElementById("newStatus");
+  const createShipmentBtn = document.getElementById("createShipmentBtn");
+  const cancelShipmentBtn = document.getElementById("cancelShipmentBtn");
+  const newShipmentMsg = document.getElementById("newShipmentMsg");
+
   function setMsg(text, type = "") {
     if (!statusMsgEl) return;
     statusMsgEl.textContent = text || "";
     statusMsgEl.className = "msg " + (type || "");
+  }
+
+  function setNewMsg(text) {
+    if (!newShipmentMsg) return;
+    newShipmentMsg.textContent = text || "";
   }
 
   function esc(s) {
@@ -39,7 +53,6 @@
     return new Date(ts).toLocaleString("nl-NL");
   }
 
-  // UI labels (NL)
   const STATUS = [
     { value: "created", label: "Aangemeld" },
     { value: "en_route", label: "Onderweg" },
@@ -51,12 +64,12 @@
     return (STATUS.find(s => s.value === status)?.label) || status || "-";
   }
 
+  // ---- Auth ----
   async function requireUser() {
     const { data, error } = await sb.auth.getUser();
     if (error) throw error;
     const user = data?.user;
     if (!user) {
-      // pas eventueel aan als jouw login path anders is:
       window.location.href = "../driver/login.html";
       return null;
     }
@@ -73,6 +86,7 @@
     }
   }
 
+  // ---- DB ----
   async function fetchShipments(driverId) {
     const { data, error } = await sb
       .from("shipments")
@@ -104,6 +118,25 @@
     if (error) throw error;
   }
 
+  // ✅ F1: create shipment (track_code leeg laten)
+  async function createShipment(driverId, customerName, startStatus) {
+    // track_code niet meegeven -> trigger zet hem automatisch
+    const { data, error } = await sb
+      .from("shipments")
+      .insert([{
+        driver_id: driverId,
+        customer_name: customerName,
+        status: startStatus || "created",
+        // track_code bewust NIET invullen
+      }])
+      .select("id, track_code, status, customer_name, created_at")
+      .maybeSingle();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // ---- UI render ----
   function renderShipments(list) {
     if (!shipmentsEl) return;
 
@@ -139,7 +172,6 @@
                 ${options}
               </select>
 
-              <!-- Extra velden (verschijnen afhankelijk van status) -->
               <div class="extra deliveredExtra" style="display:none; margin-top:10px;">
                 <div class="muted" style="margin-bottom:6px;">Ontvangen door (naam)</div>
                 <input class="deliveredName" type="text" placeholder="Bijv. Jan Jansen"
@@ -163,7 +195,6 @@
       `;
     }).join("");
 
-    // Wire events per card
     shipmentsEl.querySelectorAll(".ship-card").forEach(card => {
       const select = card.querySelector(".statusSelect");
       const saveBtn = card.querySelector(".saveBtn");
@@ -177,11 +208,9 @@
 
       function updateExtras() {
         const v = select.value;
-
         deliveredExtra.style.display = (v === "delivered") ? "block" : "none";
         problemExtra.style.display = (v === "problem") ? "block" : "none";
 
-        // optioneel: leegmaken als je wisselt
         if (v !== "delivered") deliveredName.value = "";
         if (v !== "problem") problemNote.value = "";
       }
@@ -197,7 +226,6 @@
           saveBtn.disabled = true;
           info.textContent = "Opslaan…";
 
-          // note afhankelijk van status
           let note = null;
 
           if (newStatus === "delivered") {
@@ -212,18 +240,13 @@
 
           if (newStatus === "problem") {
             const pn = (problemNote.value || "").trim();
-            note = pn || null; // mag leeg
+            note = pn || null;
           }
 
-          // 1) update shipments
           await updateShipmentStatus(shipmentId, newStatus);
-
-          // 2) insert event
           await insertEvent(shipmentId, newStatus, note);
 
           info.textContent = "Opgeslagen ✅";
-
-          // reload lijst (zodat huidige status netjes klopt)
           await refresh();
 
         } catch (e) {
@@ -236,7 +259,7 @@
     });
   }
 
-  // Realtime (optioneel – als jij al realtime had, laten we dit aan)
+  // ---- Realtime ----
   let rt = null;
   async function startRealtime(driverId) {
     try {
@@ -257,6 +280,7 @@
     }
   }
 
+  // ---- Init / Refresh ----
   let driverId = null;
 
   async function refresh() {
@@ -265,7 +289,49 @@
     renderShipments(list);
   }
 
-  // Init
+  function showNewPanel(show) {
+    if (!newShipmentPanel) return;
+    newShipmentPanel.style.display = show ? "block" : "none";
+    if (show) {
+      setNewMsg("");
+      newCustomerName.value = "";
+      newStatus.value = "created";
+      newCustomerName.focus();
+    }
+  }
+
+  // ---- F1 actions ----
+  async function handleCreateShipment() {
+    const name = (newCustomerName.value || "").trim();
+    const startStatus = (newStatus.value || "created").trim();
+
+    if (!name) {
+      setNewMsg("Vul klantnaam in.");
+      return;
+    }
+
+    try {
+      createShipmentBtn.disabled = true;
+      setNewMsg("Aanmaken…");
+
+      const created = await createShipment(driverId, name, startStatus);
+
+      // meteen een eerste event aanmaken zodat timeline nooit leeg is
+      await insertEvent(created.id, startStatus, null);
+
+      setNewMsg(`Aangemaakt ✅ Trackcode: ${created.track_code}`);
+      await refresh();
+
+      // panel mag open blijven of sluiten; ik sluit hem na succes:
+      setTimeout(() => showNewPanel(false), 900);
+    } catch (e) {
+      console.error(e);
+      setNewMsg("Aanmaken mislukt (check console / RLS).");
+    } finally {
+      createShipmentBtn.disabled = false;
+    }
+  }
+
   (async function init() {
     try {
       const user = await requireUser();
@@ -274,7 +340,12 @@
       driverId = user.id;
       if (whoamiEl) whoamiEl.textContent = user.email || user.id;
 
-      if (logoutBtn) logoutBtn.addEventListener("click", logout);
+      logoutBtn?.addEventListener("click", logout);
+
+      // F1 panel events
+      newShipmentBtn?.addEventListener("click", () => showNewPanel(true));
+      cancelShipmentBtn?.addEventListener("click", () => showNewPanel(false));
+      createShipmentBtn?.addEventListener("click", handleCreateShipment);
 
       setMsg("Dashboard laden…", "");
       await refresh();
