@@ -23,44 +23,44 @@
     </div>
 
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-        <h2 style="margin:0;">Mijn zendingen</h2>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>Mijn zendingen</h2>
         <button id="newShipmentBtn" class="btn">+ Nieuwe zending</button>
       </div>
 
-      <div id="statusMsg" class="msg" style="margin-top:10px;"></div>
+      <div id="statusMsg" class="msg"></div>
 
-      <!-- Nieuw zending formulier (hidden tot je op knop klikt) -->
-      <div id="newShipmentPanel" class="card" style="margin-top:12px; display:none;">
-        <h3 style="margin-top:0;">Nieuwe zending aanmaken</h3>
+      <!-- NIEUWE ZENDING -->
+      <div id="newShipmentPanel" class="card" style="display:none; margin-top:12px;">
+        <h3>Nieuwe zending</h3>
 
-        <div class="row" style="gap:10px;">
-          <div style="flex:1;">
-            <div class="muted" style="margin-bottom:6px;">Klantnaam</div>
-            <input id="newCustomerName" placeholder="Bijv. Jan Jansen" style="width:100%; padding:10px; border-radius:10px;" />
-          </div>
+        <label>Klantnaam</label>
+        <input id="customerName" placeholder="Bijv. Jan Jansen" />
 
-          <div style="min-width:180px;">
-            <div class="muted" style="margin-bottom:6px;">Start status</div>
-            <select id="newStatus" style="width:100%; padding:10px; border-radius:10px;">
-              <option value="created" selected>Aangemeld</option>
-              <option value="en_route">Onderweg</option>
-            </select>
-          </div>
-        </div>
+        <label>Telefoonnummer</label>
+        <input id="customerPhone" placeholder="06 12345678" />
 
-        <div class="row" style="gap:10px; margin-top:12px;">
-          <button id="createShipmentBtn" class="btn" style="min-width:180px;">Aanmaken</button>
-          <button id="cancelShipmentBtn" class="btn" style="background:transparent;">Annuleren</button>
+        <label>Ophaaladres</label>
+        <input id="pickupAddress" placeholder="Straat + plaats" />
+
+        <label>Afleveradres</label>
+        <input id="deliveryAddress" placeholder="Straat + plaats" />
+
+        <label>Startstatus</label>
+        <select id="startStatus">
+          <option value="created">Aangemeld</option>
+          <option value="en_route">Onderweg</option>
+        </select>
+
+        <div style="margin-top:12px;">
+          <button id="createShipmentBtn" class="btn">Aanmaken</button>
+          <button id="cancelShipmentBtn" class="btn">Annuleren</button>
           <span id="newShipmentMsg" class="muted"></span>
-        </div>
-
-        <div class="muted" style="margin-top:10px;">
-          Trackcode wordt automatisch gemaakt (DVK-YYYY-0001).
         </div>
       </div>
 
-      <div id="shipments" class="grid" style="margin-top:12px;"></div>
+      <!-- LIJST -->
+      <div id="shipments" class="grid" style="margin-top:16px;"></div>
     </div>
   </div>
 
