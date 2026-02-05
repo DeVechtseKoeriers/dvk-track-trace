@@ -1,500 +1,192 @@
-/* ==========================================================
-   DVK – Chauffeursdashboard
-   Bestand: public/js/dashboard.js
+/* public/js/dashboard.js
+   Chauffeur Dashboard:
+   - laadt shipments voor driver_id
+   - status wijzigen via knoppen
+   - schrijft altijd een shipment_event
+   - bij delivered vraagt om ontvangernaam en zet dat in note
+*/
 
-   A2.4 Afgeleverd:
-   - Ontvanger verplicht
-   - Locatie dropdown verplicht
-   - Handtekening (tekst) verplicht
-   - Extra notitie optioneel
-
-   A2.3 Probleem:
-   - Categorie dropdown verplicht
-   - Omschrijving verplicht
-
-   A2.5 UX:
-   - Onthoudt laatste "afleverlocatie" per chauffeur (localStorage)
-   - Auto-vult locatie in bij openen Afgeleverd-panel
-========================================================== */
-
-const sb = window.supabaseClient;
-
-const whoEl = document.getElementById("whoami");
-const logoutBtn = document.getElementById("logoutBtn");
-const statusEl = document.getElementById("status");
-const listEl = document.getElementById("list");
-
-function setStatus(msg, isError = false) {
-  if (!statusEl) return;
-  statusEl.textContent = msg || "";
-  statusEl.style.color = isError ? "#ffb4b4" : "";
-}
-
-function fmtDT(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("nl-NL", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function shortId(id) {
-  return String(id || "").slice(0, 8);
-}
-
-function badgeClass(status) {
-  return `badge b-${String(status || "").toLowerCase()}`;
-}
-
-/* -------------------------
-   A2.5 localStorage helpers
-------------------------- */
-function lsKey(prefix) {
-  // per chauffeur (currentDriverId)
-  return `dvk_${prefix}_${currentDriverId || "unknown"}`;
-}
-
-function lsGet(prefix) {
-  try {
-    return localStorage.getItem(lsKey(prefix)) || "";
-  } catch (_) {
-    return "";
-  }
-}
-
-function lsSet(prefix, value) {
-  try {
-    localStorage.setItem(lsKey(prefix), String(value || ""));
-  } catch (_) {}
-}
-
-/* -------------------------
-   Auth
-------------------------- */
-async function requireSession() {
-  const { data, error } = await sb.auth.getSession();
-  if (error) throw error;
-  const session = data?.session;
-  if (!session) {
-    window.location.href = "/dvk-track-trace/driver/index.html";
-    return null;
-  }
-  return session;
-}
-
-async function signOut() {
-  await sb.auth.signOut();
-  window.location.href = "/dvk-track-trace/driver/index.html";
-}
-
-/* -------------------------
-   Data
-------------------------- */
-async function loadShipmentsWithEvents(driverId) {
-  const { data: shipments, error: shipErr } = await sb
-    .from("shipments")
-    .select("id, status, customer_name, created_at")
-    .eq("driver_id", driverId)
-    .order("created_at", { ascending: false });
-
-  if (shipErr) throw shipErr;
-
-  const ids = (shipments || []).map((s) => s.id);
-  if (ids.length === 0) return [];
-
-  const { data: events, error: evErr } = await sb
-    .from("shipment_events")
-    .select("id, shipment_id, event_type, note, created_at")
-    .in("shipment_id", ids)
-    .order("created_at", { ascending: true });
-
-  if (evErr) throw evErr;
-
-  const byShip = new Map();
-  for (const e of events || []) {
-    const arr = byShip.get(e.shipment_id) || [];
-    arr.push(e);
-    byShip.set(e.shipment_id, arr);
+(function () {
+  const sb = window.supabaseClient;
+  if (!sb) {
+    console.error("supabaseClient ontbreekt. Check supabase-config.js");
+    return;
   }
 
-  return (shipments || []).map((s) => ({
-    ...s,
-    events: byShip.get(s.id) || [],
-  }));
-}
+  // ====== DOM (pas aan als jouw ids anders zijn) ======
+  const listEl = document.getElementById("shipments");
+  const driverIdEl = document.getElementById("driverId"); // verborgen input of data-veld
+  const statusEl = document.getElementById("statusMsg");
 
-async function updateShipmentStatus(shipmentId, newStatus, note) {
-  const { error: upErr } = await sb
-    .from("shipments")
-    .update({ status: newStatus })
-    .eq("id", shipmentId);
-
-  if (upErr) throw upErr;
-
-  const { error: insErr } = await sb.from("shipment_events").insert([
-    {
-      shipment_id: shipmentId,
-      event_type: newStatus,
-      note: note || null,
-    },
-  ]);
-
-  if (insErr) throw insErr;
-}
-
-/* -------------------------
-   UI state
-------------------------- */
-const openPanel = new Map(); // shipmentId -> "delivered" | "problem" | null
-let currentDriverId = null;
-let isSaving = false;
-
-/* -------------------------
-   Render
-------------------------- */
-function renderEvents(events) {
-  if (!events || events.length === 0) return `<div class="muted">Nog geen events</div>`;
-  const newestFirst = [...events].reverse();
-
-  return `
-    <div class="events">
-      ${newestFirst
-        .slice(0, 6)
-        .map(
-          (e) => `
-        <div class="row" style="justify-content:space-between; gap:14px;">
-          <div>
-            <div class="${badgeClass(e.event_type)}">${e.event_type}</div>
-            <div class="muted" style="margin-top:6px;">${e.note || ""}</div>
-          </div>
-          <div class="muted" style="white-space:nowrap;">${fmtDT(e.created_at)}</div>
-        </div>
-      `
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function renderDeliveredPanel(shipmentId, isOpen) {
-  // A2.5: default locatie uit localStorage (kan "" zijn)
-  const lastLoc = lsGet("last_delivery_location");
-
-  return `
-    <div class="panel" data-panel="delivered" style="display:${isOpen ? "block" : "none"};">
-      <div class="field">
-        <div class="label">Naam ontvanger (verplicht)</div>
-        <input class="input" type="text" data-delivered-receiver placeholder="Bijv. J. Jansen" />
-      </div>
-
-      <div class="field">
-        <div class="label">Afleverlocatie (verplicht)</div>
-        <select class="select" data-delivered-location data-default-loc="${lastLoc}">
-          <option value="">Kies locatie…</option>
-          <option value="voordeur">Voordeur</option>
-          <option value="buren">Buren</option>
-          <option value="receptie">Receptie</option>
-          <option value="pakketbox">Pakketbox</option>
-        </select>
-        <div class="help">Auto-voorkeur: laatst gebruikte locatie wordt automatisch geselecteerd.</div>
-      </div>
-
-      <div class="field">
-        <div class="label">Handtekening (verplicht)</div>
-        <input class="input" type="text" data-delivered-signature placeholder="Typ naam als handtekening (bijv. Jan Jansen)" />
-      </div>
-
-      <div class="field">
-        <div class="label">Extra notitie (optioneel)</div>
-        <textarea class="textarea" data-delivered-note placeholder="Bijv. achter het huis, hond in tuin…"></textarea>
-      </div>
-
-      <div class="panel-actions">
-        <button class="btn ok" data-action="saveDelivered" data-ship="${shipmentId}">Opslaan (Afgeleverd)</button>
-        <button class="btn secondary" data-action="cancelPanel" data-ship="${shipmentId}">Annuleren</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderProblemPanel(shipmentId, isOpen) {
-  return `
-    <div class="panel" data-panel="problem" style="display:${isOpen ? "block" : "none"};">
-      <div class="field">
-        <div class="label">Probleem categorie (verplicht)</div>
-        <select class="select" data-problem-category>
-          <option value="">Kies categorie…</option>
-          <option value="customer_not_home">Klant niet thuis</option>
-          <option value="wrong_address">Verkeerd adres</option>
-          <option value="damaged">Schade</option>
-          <option value="access_blocked">Toegang geblokkeerd</option>
-          <option value="other">Anders</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <div class="label">Omschrijving (verplicht)</div>
-        <textarea class="textarea" data-problem-note placeholder="Omschrijf wat er aan de hand is…"></textarea>
-      </div>
-
-      <div class="panel-actions">
-        <button class="btn bad" data-action="saveProblem" data-ship="${shipmentId}">Opslaan (Probleem)</button>
-        <button class="btn secondary" data-action="cancelPanel" data-ship="${shipmentId}">Annuleren</button>
-      </div>
-    </div>
-  `;
-}
-
-function renderActionButtons(shipment) {
-  const sid = shipment.id;
-  const open = openPanel.get(sid) || null;
-
-  return `
-    <div class="row" style="gap:10px; margin-top:12px; flex-wrap:wrap;">
-      <button class="btn" data-action="quickStatus" data-status="created" data-ship="${sid}">Aangemeld</button>
-      <button class="btn" data-action="quickStatus" data-status="en_route" data-ship="${sid}">Onderweg</button>
-
-      <button class="btn ok" data-action="openPanel" data-panel="delivered" data-ship="${sid}">
-        Afgeleverd…
-      </button>
-      <button class="btn bad" data-action="openPanel" data-panel="problem" data-ship="${sid}">
-        Probleem…
-      </button>
-    </div>
-
-    ${renderDeliveredPanel(sid, open === "delivered")}
-    ${renderProblemPanel(sid, open === "problem")}
-  `;
-}
-
-function renderShipmentCard(shipment) {
-  const status = shipment.status || "";
-
-  return `
-    <div class="ship-card" data-ship-card="${shipment.id}">
-      <div class="row" style="justify-content:space-between; align-items:flex-start;">
-        <div>
-          <div style="font-weight:800; font-size:18px;">#${shortId(shipment.id)}</div>
-          <div style="margin-top:4px;">Klant: <strong>${shipment.customer_name || "-"}</strong></div>
-          <div class="muted" style="margin-top:4px;">Aangemaakt: ${fmtDT(shipment.created_at)}</div>
-        </div>
-        <div class="${badgeClass(status)}" style="align-self:flex-start;">${status || "-"}</div>
-      </div>
-
-      ${renderActionButtons(shipment)}
-
-      <div class="sep" style="margin-top:14px;"></div>
-
-      ${renderEvents(shipment.events)}
-    </div>
-  `;
-}
-
-/* -------------------------
-   Refresh
-------------------------- */
-async function refresh(opts = { silent: false }) {
-  if (!opts.silent) setStatus("Laden...");
-  try {
-    const rows = await loadShipmentsWithEvents(currentDriverId);
-    if (listEl) listEl.innerHTML = rows.map(renderShipmentCard).join("");
-    setStatus(`${rows.length} zending(en) geladen.`);
-
-    // A2.5: auto-select default location in open delivered panels
-    applyDefaultDeliveryLocation();
-  } catch (e) {
-    console.error(e);
-    setStatus("Fout bij laden: " + (e?.message || e), true);
+  function setMsg(text, type = "") {
+    if (!statusEl) return;
+    statusEl.textContent = text || "";
+    statusEl.className = "msg " + (type || "");
   }
-}
 
-/* A2.5: na render default location toepassen */
-function applyDefaultDeliveryLocation() {
-  const selects = document.querySelectorAll("select[data-delivered-location]");
-  selects.forEach((sel) => {
-    const def = sel.getAttribute("data-default-loc") || "";
-    if (!def) return;
-    // alleen invullen als de user nog niks gekozen heeft
-    if (!sel.value) sel.value = def;
-  });
-}
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-/* -------------------------
-   Realtime
-------------------------- */
-let realtimeChannel = null;
-
-function startRealtime(driverId) {
-  realtimeChannel = sb
-    .channel("dvk-driver-dashboard")
-    .on("postgres_changes", { event: "*", schema: "public", table: "shipments" }, (payload) => {
-      const row = payload.new || payload.old;
-      if (row?.driver_id === driverId) refresh({ silent: true });
-    })
-    .on("postgres_changes", { event: "*", schema: "public", table: "shipment_events" }, () => {
-      refresh({ silent: true });
-    })
-    .subscribe();
-}
-
-/* -------------------------
-   Actions
-------------------------- */
-function getCard(shipmentId) {
-  return document.querySelector(`[data-ship-card="${shipmentId}"]`);
-}
-
-async function doQuickStatus(shipmentId, status) {
-  if (isSaving) return;
-
-  const ok = window.confirm(`Status wijzigen naar "${status}"?`);
-  if (!ok) return;
-
-  const defaults = {
-    created: "Zending aangemeld",
-    en_route: "Chauffeur is onderweg",
+  // ====== Status mapping ======
+  const statusMap = {
+    created: { title: "Aangemeld" },
+    en_route: { title: "Onderweg" },
+    delivered: { title: "Afgeleverd" },
+    problem: { title: "Probleem" },
   };
 
-  isSaving = true;
-  setStatus("Opslaan...");
-  try {
-    await updateShipmentStatus(shipmentId, status, defaults[status] || null);
-    setStatus("Opgeslagen ✅");
-    openPanel.set(shipmentId, null);
-    await refresh({ silent: true });
-  } catch (e) {
-    console.error(e);
-    setStatus("Fout: " + (e?.message || e), true);
-  } finally {
-    isSaving = false;
-  }
-}
-
-async function saveDelivered(shipmentId) {
-  if (isSaving) return;
-  const card = getCard(shipmentId);
-  if (!card) return;
-
-  const receiver = (card.querySelector("[data-delivered-receiver]")?.value || "").trim();
-  const location = (card.querySelector("[data-delivered-location]")?.value || "").trim();
-  const signature = (card.querySelector("[data-delivered-signature]")?.value || "").trim();
-  const extraNote = (card.querySelector("[data-delivered-note]")?.value || "").trim();
-
-  if (!receiver) return alert("Naam ontvanger is verplicht.");
-  if (!location) return alert("Afleverlocatie is verplicht.");
-  if (!signature) return alert("Handtekening (tekst) is verplicht.");
-
-  // A2.5: onthoud deze locatie voor volgende keer
-  lsSet("last_delivery_location", location);
-
-  const note = extraNote
-    ? `Ontvangen door: ${receiver} | Locatie: ${location} | Handtekening: ${signature} | Notitie: ${extraNote}`
-    : `Ontvangen door: ${receiver} | Locatie: ${location} | Handtekening: ${signature}`;
-
-  isSaving = true;
-  setStatus("Opslaan (Afgeleverd)...");
-  try {
-    await updateShipmentStatus(shipmentId, "delivered", note);
-    setStatus("Afgeleverd opgeslagen ✅");
-    openPanel.set(shipmentId, null);
-    await refresh({ silent: true });
-  } catch (e) {
-    console.error(e);
-    setStatus("Fout: " + (e?.message || e), true);
-  } finally {
-    isSaving = false;
-  }
-}
-
-async function saveProblem(shipmentId) {
-  if (isSaving) return;
-  const card = getCard(shipmentId);
-  if (!card) return;
-
-  const category = (card.querySelector("[data-problem-category]")?.value || "").trim();
-  const noteText = (card.querySelector("[data-problem-note]")?.value || "").trim();
-
-  if (!category) return alert("Probleem categorie is verplicht.");
-  if (!noteText) return alert("Omschrijving is verplicht.");
-
-  const note = `Categorie: ${category} | Omschrijving: ${noteText}`;
-
-  isSaving = true;
-  setStatus("Opslaan (Probleem)...");
-  try {
-    await updateShipmentStatus(shipmentId, "problem", note);
-    setStatus("Probleem opgeslagen ✅");
-    openPanel.set(shipmentId, null);
-    await refresh({ silent: true });
-  } catch (e) {
-    console.error(e);
-    setStatus("Fout: " + (e?.message || e), true);
-  } finally {
-    isSaving = false;
-  }
-}
-
-/* -------------------------
-   Delegation
-------------------------- */
-document.addEventListener("click", async (ev) => {
-  const el = ev.target.closest("[data-action]");
-  if (!el) return;
-
-  const action = el.getAttribute("data-action");
-  const shipmentId = el.getAttribute("data-ship");
-
-  if (action === "openPanel") {
-    const panel = el.getAttribute("data-panel");
-    openPanel.set(shipmentId, panel);
-    await refresh({ silent: true });
-    return;
+  function statusLabel(code) {
+    return statusMap[code]?.title || code || "";
   }
 
-  if (action === "cancelPanel") {
-    openPanel.set(shipmentId, null);
-    await refresh({ silent: true });
-    return;
+  // ====== DriverId bepalen ======
+  // Optie A: driverId in hidden input (#driverId)
+  // Optie B: driverId in localStorage ("driver_id")
+  function getDriverId() {
+    const fromEl = driverIdEl?.value?.trim();
+    if (fromEl) return fromEl;
+
+    const fromLS = localStorage.getItem("driver_id");
+    if (fromLS) return fromLS;
+
+    return "";
   }
 
-  if (action === "quickStatus") {
-    const status = el.getAttribute("data-status");
-    await doQuickStatus(shipmentId, status);
-    return;
+  // ====== Data ======
+  async function loadShipments(driverId) {
+    const { data, error } = await sb
+      .from("shipments")
+      .select("id, track_code, status, customer_name, created_at")
+      .eq("driver_id", driverId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return data || [];
   }
 
-  if (action === "saveDelivered") {
-    await saveDelivered(shipmentId);
-    return;
+  async function insertEvent({ shipmentId, eventType, note }) {
+    const payload = {
+      shipment_id: shipmentId,
+      event_type: eventType,
+      note: note || null,
+    };
+
+    const { error } = await sb.from("shipment_events").insert(payload);
+    if (error) throw error;
   }
 
-  if (action === "saveProblem") {
-    await saveProblem(shipmentId);
-    return;
+  async function updateShipmentStatus({ shipmentId, newStatus }) {
+    const { error } = await sb
+      .from("shipments")
+      .update({ status: newStatus })
+      .eq("id", shipmentId);
+
+    if (error) throw error;
   }
-});
 
-/* -------------------------
-   Init
-------------------------- */
-(async function init() {
-  try {
-    const session = await requireSession();
-    if (!session) return;
+  // ====== UI ======
+  function renderShipments(items) {
+    if (!listEl) return;
 
-    currentDriverId = session.user.id;
+    if (!items.length) {
+      listEl.innerHTML = `<div class="muted">Geen zendingen gevonden.</div>`;
+      return;
+    }
 
-    if (whoEl) whoEl.textContent = session?.user?.email || "Ingelogd";
-    if (logoutBtn) logoutBtn.addEventListener("click", signOut);
+    listEl.innerHTML = items
+      .map((s) => {
+        return `
+          <div class="ship-card">
+            <div class="ship-top">
+              <div>
+                <div class="ship-title">#${escapeHtml((s.id || "").slice(0, 8))}</div>
+                <div class="muted">Klant: ${escapeHtml(s.customer_name || "")}</div>
+                <div class="muted">Trackcode: ${escapeHtml(s.track_code || "")}</div>
+              </div>
+              <div class="status-pill">
+                <div class="status-big">${escapeHtml(statusLabel(s.status))}</div>
+              </div>
+            </div>
 
-    await refresh({ silent: false });
-    startRealtime(currentDriverId);
-  } catch (e) {
-    console.error(e);
-    setStatus("Init fout: " + (e?.message || e), true);
+            <div class="row" style="margin-top:12px; gap:10px;">
+              <button class="btn" data-action="created" data-id="${escapeHtml(s.id)}">Aangemeld</button>
+              <button class="btn" data-action="en_route" data-id="${escapeHtml(s.id)}">Onderweg</button>
+              <button class="btn" data-action="delivered" data-id="${escapeHtml(s.id)}">Afgeleverd</button>
+              <button class="btn" data-action="problem" data-id="${escapeHtml(s.id)}">Probleem</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    // events
+    listEl.querySelectorAll("button[data-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const shipmentId = btn.getAttribute("data-id");
+        const action = btn.getAttribute("data-action");
+        await handleStatusChange(shipmentId, action);
+      });
+    });
   }
+
+  // ====== Status change handler ======
+  async function handleStatusChange(shipmentId, newStatus) {
+    try {
+      setMsg("Bezig…", "");
+
+      let note = "";
+
+      // ✅ bij afgeleverd vragen we ontvanger
+      if (newStatus === "delivered") {
+        note = prompt("Ontvangen door (naam ontvanger):", "") || "";
+        note = note.trim();
+        if (!note) {
+          setMsg("Afgebroken: geen ontvanger ingevuld.", "bad");
+          return;
+        }
+      }
+
+      // 1) shipment status updaten
+      await updateShipmentStatus({ shipmentId, newStatus });
+
+      // 2) event schrijven (altijd!)
+      await insertEvent({ shipmentId, eventType: newStatus, note });
+
+      // 3) lijst herladen
+      const driverId = getDriverId();
+      const shipments = await loadShipments(driverId);
+      renderShipments(shipments);
+
+      setMsg("Opgeslagen ✅", "ok");
+    } catch (e) {
+      console.error(e);
+      setMsg("Opslaan mislukt (check console)", "bad");
+    }
+  }
+
+  // ====== Init ======
+  async function init() {
+    const driverId = getDriverId();
+    if (!driverId) {
+      setMsg("Driver ID ontbreekt. (Geen zendingen zichtbaar)", "bad");
+      return;
+    }
+
+    try {
+      const shipments = await loadShipments(driverId);
+      renderShipments(shipments);
+      setMsg("Dashboard geladen ✅", "ok");
+    } catch (e) {
+      console.error(e);
+      setMsg("Fout bij laden (check console)", "bad");
+    }
+  }
+
+  init();
 })();
