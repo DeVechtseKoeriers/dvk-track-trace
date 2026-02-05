@@ -2,70 +2,70 @@
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chauffeur Dashboard | DVK</title>
-
   <link rel="stylesheet" href="../public/css/style.css" />
 </head>
-
 <body>
   <div class="container">
-    <div class="header">
-      <div class="brand">
-        <div class="brand-title">De Vechtse Koeriers</div>
-        <div class="brand-sub">Chauffeur Dashboard</div>
-      </div>
-
-      <div class="header-actions">
-        <span id="whoami" class="muted"></span>
-        <button id="logoutBtn" class="btn">Uitloggen</button>
-      </div>
+    <div class="brand">
+      <div class="brand-title">De Vechtse Koeriers</div>
+      <div class="brand-sub">Chauffeur Dashboard</div>
+      <div id="userEmail" class="muted"></div>
     </div>
 
+    <button id="logoutBtn" class="btn">Uitloggen</button>
+
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h2>Mijn zendingen</h2>
-        <button id="newShipmentBtn" class="btn">+ Nieuwe zending</button>
+      <div class="row row-space">
+        <div>
+          <h2>Mijn zendingen</h2>
+          <div id="dashMsg" class="msg ok">Dashboard laden…</div>
+        </div>
+        <button id="toggleCreateBtn" class="btn">+ Nieuwe zending</button>
       </div>
 
-      <div id="statusMsg" class="msg"></div>
-
-      <!-- NIEUWE ZENDING -->
-      <div id="newShipmentPanel" class="card" style="display:none; margin-top:12px;">
-        <h3>Nieuwe zending</h3>
+      <div id="createBox" class="card inner" style="display:none;">
+        <h3>Nieuwe zending aanmaken</h3>
 
         <label>Klantnaam</label>
-        <input id="customerName" placeholder="Bijv. Jan Jansen" />
+        <input id="customerNameInput" type="text" placeholder="Bijv. Pieter Jansma" autocomplete="off" />
 
-        <label>Telefoonnummer</label>
-        <input id="customerPhone" placeholder="06 12345678" />
-
-        <label>Ophaaladres</label>
-        <input id="pickupAddress" placeholder="Straat + plaats" />
-
-        <label>Afleveradres</label>
-        <input id="deliveryAddress" placeholder="Straat + plaats" />
-
-        <label>Startstatus</label>
-        <select id="startStatus">
+        <label>Start status</label>
+        <select id="startStatusSelect">
           <option value="created">Aangemeld</option>
           <option value="en_route">Onderweg</option>
+          <option value="delivered">Afgeleverd</option>
         </select>
 
-        <div style="margin-top:12px;">
-          <button id="createShipmentBtn" class="btn">Aanmaken</button>
-          <button id="cancelShipmentBtn" class="btn">Annuleren</button>
-          <span id="newShipmentMsg" class="muted"></span>
+        <!-- F3: Pakketgegevens -->
+        <label>Aantal colli</label>
+        <input id="colliInput" type="number" min="1" placeholder="Bijv. 3" />
+
+        <label>Gewicht (kg)</label>
+        <input id="weightInput" type="number" step="0.1" placeholder="Bijv. 12.5" />
+
+        <div class="row row-space" style="margin-top:10px;">
+          <button id="createBtn" class="btn primary">Aanmaken</button>
+          <button id="cancelCreateBtn" class="btn ghost">Annuleren</button>
         </div>
+
+        <div class="muted" style="margin-top:8px;">
+          Trackcode wordt automatisch gemaakt (DVK-YYYY-0001).
+        </div>
+
+        <div id="createMsg" class="msg" style="margin-top:10px;"></div>
       </div>
 
-      <!-- LIJST -->
-      <div id="shipments" class="grid" style="margin-top:16px;"></div>
+      <div id="shipmentsList" class="list" style="margin-top:14px;"></div>
     </div>
   </div>
 
+  <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Config maakt window.supabaseClient -->
   <script src="../public/js/supabase-config.js"></script>
+  <!-- Dashboard logic -->
   <script src="../public/js/dashboard.js"></script>
 </body>
 </html>
