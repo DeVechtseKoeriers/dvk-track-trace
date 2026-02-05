@@ -9,40 +9,34 @@
 
 <body>
   <div class="container">
-    <div class="brand">
-      <div class="brand-title">De Vechtse Koeriers</div>
-      <div class="brand-sub">Track & Trace</div>
+    <h1>Volg je zending</h1>
+    <div class="muted">Vul je trackcode in (bijv. DVK-2026-0001)</div>
+
+    <div class="row" style="margin-top:12px;">
+      <input id="trackInput" placeholder="Bijv. DVK-2026-0001" autocomplete="off" />
+      <button id="searchBtn">Zoeken</button>
     </div>
 
-    <div class="card">
-      <h1>Volg je zending</h1>
-      <div class="muted">Vul je trackcode in (bijv. DVK-2026-0001)</div>
+    <div id="statusMsg" class="msg" style="margin-top:10px;"></div>
 
-      <div class="row" style="margin-top:12px;">
-        <input id="trackInput" placeholder="Bijv. DVK-2026-0001" autocomplete="off" />
-        <button id="searchBtn" class="btn primary">Zoeken</button>
-      </div>
+    <div id="result" class="card" style="display:none; margin-top:14px;">
+      <div style="font-weight:700; margin-bottom:8px;">Zending gevonden</div>
 
-      <div id="statusMsg" class="msg" style="margin-top:10px;"></div>
+      <div id="shipMeta" class="muted"></div>
 
-      <div id="result" class="card inner" style="display:none; margin-top:12px;">
-        <div style="font-weight:700;">Zending gevonden</div>
-        <div id="foundInfo" class="muted" style="margin-top:6px;"></div>
+      <div style="margin-top:12px; font-weight:700;">Status</div>
+      <div id="shipStatus"></div>
 
-        <!-- F3: pakketgegevens -->
-        <div id="packageInfo" style="margin-top:10px;"></div>
+      <div style="margin-top:12px; font-weight:700;">Pakketgegevens</div>
+      <div id="pkgInfo" class="muted"></div>
 
-        <div style="margin-top:12px; font-weight:700;">Timeline</div>
-        <div id="timeline" class="timeline" style="margin-top:6px;"></div>
-      </div>
+      <div style="margin-top:12px; font-weight:700;">Timeline</div>
+      <div id="timeline" class="timeline"></div>
     </div>
   </div>
 
-  <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- Config -->
   <script src="../public/js/supabase-config.js"></script>
-  <!-- Track logic -->
   <script src="../public/js/track.js"></script>
 </body>
 </html>
