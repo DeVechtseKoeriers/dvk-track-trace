@@ -16,8 +16,8 @@
     TRACK: "track_code",
     STATUS: "status",
     CUSTOMER: "customer_name",
-    COLLI: "colli",
-    KG: "kg", // <- als jij 'weight_kg' hebt: zet dit op "weight_kg"
+    COLLI: "colli_count",
+    KG: "weight_kg", // <- als jij 'weight_kg' hebt: zet dit op "weight_kg"
     DESC: "package_desc",
     ADDRESS: "customer_address",
     PHONE: "customer_phone",
