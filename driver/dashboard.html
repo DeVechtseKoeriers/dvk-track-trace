@@ -2,94 +2,117 @@
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chauffeur Dashboard | DVK</title>
-
-  <!-- CSS: 1 map terug, dan public -->
   <link rel="stylesheet" href="../public/css/style.css" />
 </head>
-
 <body>
-  <main class="wrap">
-    <header class="top">
+  <main class="container">
+    <header class="header">
       <div>
-        <h1>De Vechtse Koeriers</h1>
+        <div class="brand">De Vechtse Koeriers</div>
         <div class="muted">Chauffeur Dashboard</div>
         <div id="userEmail" class="muted"></div>
       </div>
-
-      <button id="logoutBtn" class="btn">Uitloggen</button>
+      <div class="header-actions">
+        <button id="logoutBtn" class="btn btn-secondary">Uitloggen</button>
+      </div>
     </header>
 
     <section class="card">
-      <h2>Mijn zendingen</h2>
-      <div id="statusMsg" class="msg"></div>
-
-      <div class="actions">
-        <button id="newShipmentBtn" class="btn btn-primary">+ Nieuwe zending</button>
+      <div class="row row-between">
+        <div>
+          <h2>Mijn zendingen</h2>
+          <div id="msg" class="msg"></div>
+        </div>
+        <button id="newBtn" class="btn">+ Nieuwe zending</button>
       </div>
 
-      <!-- lijst -->
-      <div id="shipmentsList" class="list"></div>
+      <div class="table-wrap">
+        <table class="table" id="shipmentsTable">
+          <thead>
+            <tr>
+              <th>Trackcode</th>
+              <th>Klant</th>
+              <th>Status</th>
+              <th>Colli</th>
+              <th>Kg</th>
+              <th>Laatst bijgewerkt</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="shipmentsBody"></tbody>
+        </table>
+      </div>
     </section>
 
-    <!-- modal / form -->
-    <section id="newShipmentPanel" class="card hidden">
-      <h3>Nieuwe zending aanmaken</h3>
+    <!-- Create / Edit panel -->
+    <section class="card" id="formCard" style="display:none;">
+      <div class="row row-between">
+        <h2 id="formTitle">Nieuwe zending</h2>
+        <button id="cancelBtn" class="btn btn-secondary">Sluiten</button>
+      </div>
 
-      <form id="createForm" class="form">
-        <label>
-          Klantnaam
-          <input id="customerName" type="text" placeholder="Bijv. Pieter J." required />
-        </label>
-
-        <label>
-          Telefoon
-          <input id="customerPhone" type="tel" placeholder="06..." />
-        </label>
-
-        <label>
-          Adres
-          <input id="customerAddress" type="text" placeholder="Straat + nr, plaats" />
-        </label>
-
-        <div class="row">
-          <label>
-            Aantal colli
-            <input id="colli" type="number" min="0" step="1" placeholder="0" />
-          </label>
-
-          <label>
-            Kg
-            <input id="kg" type="number" min="0" step="0.1" placeholder="0.0" />
-          </label>
+      <div class="grid">
+        <div>
+          <label>Klantnaam</label>
+          <input id="customerName" class="input" placeholder="Bijv. Pieter Jansen" />
         </div>
 
-        <label>
-          Start status
-          <select id="startStatus">
+        <div>
+          <label>Telefoon</label>
+          <input id="customerPhone" class="input" placeholder="Bijv. 06..." />
+        </div>
+
+        <div class="grid-col-2">
+          <label>Adres (afleveradres)</label>
+          <input id="customerAddress" class="input" placeholder="Straat, huisnr, plaats" />
+        </div>
+
+        <div class="grid-col-2">
+          <label>Omschrijving / pakketgegevens</label>
+          <input id="packageDesc" class="input" placeholder="Bijv. gekoelde box, levensmiddelen..." />
+        </div>
+
+        <div>
+          <label>Aantal colli</label>
+          <input id="colli" class="input" type="number" min="0" step="1" placeholder="0" />
+        </div>
+
+        <div>
+          <label>Gewicht (kg)</label>
+          <input id="weightKg" class="input" type="number" min="0" step="0.1" placeholder="0.0" />
+        </div>
+
+        <div>
+          <label>Status</label>
+          <select id="status" class="input">
             <option value="created">Aangemeld</option>
             <option value="en_route">Onderweg</option>
             <option value="delivered">Afgeleverd</option>
+            <option value="problem">Probleem</option>
           </select>
-        </label>
+        </div>
 
+        <div>
+          <label>Afgeleverd aan (alleen bij Afgeleverd)</label>
+          <input id="receivedBy" class="input" placeholder="Bijv. Lorena Wiebes" />
+        </div>
+      </div>
+
+      <div class="row row-between" style="margin-top:14px;">
+        <div class="muted" id="trackPreview"></div>
         <div class="row">
-          <button type="button" id="cancelCreate" class="btn">Annuleren</button>
-          <button type="submit" class="btn btn-primary">Aanmaken</button>
+          <button id="saveBtn" class="btn">Opslaan</button>
         </div>
-
-        <div class="muted" style="margin-top:10px;">
-          Trackcode wordt automatisch gemaakt (DVK-YYYY-0001).
-        </div>
-      </form>
+      </div>
     </section>
   </main>
 
-  <!-- Supabase CDN (als je die gebruikt) -->
+  <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Config + dashboard logic: 1 map terug -->
+  <!-- Wij zitten in /driver/, dus 1 map terug -->
   <script src="../public/js/supabase-config.js"></script>
   <script src="../public/js/dashboard.js"></script>
 </body>
