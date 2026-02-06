@@ -1,83 +1,172 @@
-// =====================================================
-// DVK – Chauffeur Dashboard
-// Bestand: /public/js/dashboard.js
-// Vereist: window.supabaseClient (uit supabase-config.js)
-// =====================================================
+/* public/js/dashboard.js
+   Chauffeur dashboard: CRUD shipments + events (RLS veilig)
+   - Trackcode auto: DVK-YYYY-0001 oplopend per jaar
+   - Na aanmaken: kun je wijzigen (Optie A)
+*/
 
 (function () {
   const sb = window.supabaseClient;
   if (!sb) {
-    console.error("[DVK] Supabase client ontbreekt.");
+    console.error("supabaseClient ontbreekt. Check public/js/supabase-config.js");
     return;
   }
 
-  // ---------- Helpers ----------
-  const $ = (id) => document.getElementById(id);
+  // --- DOM
+  const userEmailEl = document.getElementById("userEmail");
+  const msgEl = document.getElementById("msg");
+  const logoutBtn = document.getElementById("logoutBtn");
 
-  function basePath() {
-    // Voor GitHub Pages project-sites: /dvk-track-trace
-    const parts = location.pathname.split("/").filter(Boolean);
-    return parts.length ? "/" + parts[0] : "";
+  const newBtn = document.getElementById("newBtn");
+  const formCard = document.getElementById("formCard");
+  const formTitle = document.getElementById("formTitle");
+  const cancelBtn = document.getElementById("cancelBtn");
+  const saveBtn = document.getElementById("saveBtn");
+
+  const shipmentsBody = document.getElementById("shipmentsBody");
+
+  const customerName = document.getElementById("customerName");
+  const customerPhone = document.getElementById("customerPhone");
+  const customerAddress = document.getElementById("customerAddress");
+  const packageDesc = document.getElementById("packageDesc");
+  const colli = document.getElementById("colli");
+  const weightKg = document.getElementById("weightKg");
+  const status = document.getElementById("status");
+  const receivedBy = document.getElementById("receivedBy");
+  const trackPreview = document.getElementById("trackPreview");
+
+  // --- State
+  let session = null;
+  let currentUser = null;
+  let editingShipment = null; // object of shipment
+
+  function setMsg(text = "", type = "") {
+    msgEl.textContent = text;
+    msgEl.className = "msg " + (type ? `msg-${type}` : "");
   }
 
-  function to(path) {
-    return location.origin + basePath() + path;
+  function statusNL(code) {
+    const map = {
+      created: "Aangemeld",
+      en_route: "Onderweg",
+      delivered: "Afgeleverd",
+      problem: "Probleem",
+    };
+    return map[code] || code || "-";
   }
 
-  function esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (m) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
-    }[m]));
+  function pad4(n) {
+    return String(n).padStart(4, "0");
   }
 
-  function setMsg(el, text, type = "") {
-    if (!el) return;
-    el.textContent = text || "";
-    el.className = "msg " + (type || "");
+  function yearNow() {
+    return new Date().getFullYear();
   }
 
-  // ---------- DOM ----------
-  const elUser = $("userEmail");
-  const elLogout = $("logoutBtn");
-
-  const elStatus = $("statusMsg");
-  const elList = $("shipmentsList");
-
-  const elNewBtn = $("newShipmentBtn");
-  const elPanel = $("newShipmentPanel");
-  const elCancel = $("cancelCreate");
-
-  const elForm = $("createForm");
-  const elName = $("customerName");
-  const elPhone = $("customerPhone");
-  const elAddr = $("customerAddress");
-  const elColli = $("colli");
-  const elKg = $("kg");
-  const elStart = $("startStatus");
-
-  // ---------- Auth ----------
   async function requireAuth() {
-    const { data } = await sb.auth.getUser();
-    if (!data?.user) {
-      location.href = to("/driver/login.html");
-      return null;
+    const { data, error } = await sb.auth.getSession();
+    if (error) throw error;
+
+    session = data.session;
+    if (!session) {
+      // terug naar login
+      window.location.href = "./login.html";
+      return false;
     }
-    elUser && (elUser.textContent = data.user.email || "");
-    return data.user;
+
+    currentUser = session.user;
+    userEmailEl.textContent = currentUser.email || "";
+    console.log("[DVK] sessie actief:", currentUser.email);
+    return true;
   }
 
   async function logout() {
     await sb.auth.signOut();
-    location.href = to("/driver/login.html");
+    window.location.href = "./login.html";
   }
 
-  elLogout && elLogout.addEventListener("click", logout);
+  function openForm(mode, shipment = null) {
+    formCard.style.display = "block";
+    editingShipment = shipment;
 
-  // ---------- Trackcode generator ----------
+    if (mode === "new") {
+      formTitle.textContent = "Nieuwe zending";
+      customerName.value = "";
+      customerPhone.value = "";
+      customerAddress.value = "";
+      packageDesc.value = "";
+      colli.value = "";
+      weightKg.value = "";
+      status.value = "created";
+      receivedBy.value = "";
+      trackPreview.textContent = "Trackcode wordt automatisch gemaakt (DVK-YYYY-0001).";
+    } else {
+      formTitle.textContent = "Zending wijzigen";
+      customerName.value = shipment.customer_name || "";
+      customerPhone.value = shipment.customer_phone || "";
+      customerAddress.value = shipment.customer_address || "";
+      packageDesc.value = shipment.package_desc || "";
+      colli.value = shipment.colli ?? "";
+      weightKg.value = shipment.weight_kg ?? "";
+      status.value = shipment.status || "created";
+      receivedBy.value = ""; // alleen bij delivered-event als note
+      trackPreview.textContent = `Trackcode: ${shipment.track_code}`;
+    }
+  }
+
+  function closeForm() {
+    formCard.style.display = "none";
+    editingShipment = null;
+  }
+
+  async function listShipments() {
+    setMsg("Laden…", "info");
+
+    const { data, error } = await sb
+      .from("shipments")
+      .select("id, track_code, customer_name, status, colli, weight_kg, updated_at, created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setMsg("Fout bij laden (check console).", "bad");
+      return;
+    }
+
+    setMsg("Dashboard geladen ✅", "ok");
+
+    shipmentsBody.innerHTML = (data || []).map((s) => {
+      const updated = s.updated_at ? new Date(s.updated_at).toLocaleString("nl-NL") : "-";
+      return `
+        <tr>
+          <td><code>${escapeHtml(s.track_code || "")}</code></td>
+          <td>${escapeHtml(s.customer_name || "-")}</td>
+          <td>${escapeHtml(statusNL(s.status))}</td>
+          <td>${s.colli ?? "-"}</td>
+          <td>${s.weight_kg ?? "-"}</td>
+          <td class="muted">${escapeHtml(updated)}</td>
+          <td style="text-align:right;">
+            <button class="btn btn-secondary btn-sm" data-edit="${s.id}">Wijzig</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    // bind edit knoppen
+    shipmentsBody.querySelectorAll("[data-edit]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-edit");
+        const shipment = (data || []).find(x => x.id === id);
+        if (!shipment) return;
+        openForm("edit", shipment);
+      });
+    });
+  }
+
   async function nextTrackCode() {
-    const y = new Date().getFullYear();
+    const y = yearNow();
     const prefix = `DVK-${y}-`;
 
+    // pak laatste shipment van dit jaar op basis van track_code
     const { data, error } = await sb
       .from("shipments")
       .select("track_code")
@@ -85,140 +174,149 @@
       .order("track_code", { ascending: false })
       .limit(1);
 
-    if (error) {
-      console.error(error);
-      return `${prefix}0001`;
+    if (error) throw error;
+
+    let next = 1;
+    const last = data && data[0] && data[0].track_code ? data[0].track_code : null;
+    if (last) {
+      const parts = last.split("-");
+      const n = parseInt(parts[2], 10);
+      if (!Number.isNaN(n)) next = n + 1;
     }
-
-    const last = data?.[0]?.track_code;
-    if (!last) return `${prefix}0001`;
-
-    const m = last.match(/(\d{4})$/);
-    const n = m ? parseInt(m[1], 10) + 1 : 1;
-    return `${prefix}${String(n).padStart(4, "0")}`;
+    return `${prefix}${pad4(next)}`;
   }
 
-  // ---------- Load shipments ----------
-  async function loadShipments() {
-    setMsg(elStatus, "Zendingen laden…", "warn");
-    elList.innerHTML = "";
+  async function insertEvent(shipmentId, eventType, note = "") {
+    const payload = {
+      shipment_id: shipmentId,
+      event_type: eventType,
+      note: note || null,
+    };
+    const { error } = await sb.from("shipment_events").insert(payload);
+    if (error) throw error;
+  }
+
+  async function createShipment() {
+    const trackCode = await nextTrackCode();
+
+    const payload = {
+      track_code: trackCode,
+      driver_id: currentUser.id,
+      customer_name: customerName.value.trim() || null,
+      customer_phone: customerPhone.value.trim() || null,
+      customer_address: customerAddress.value.trim() || null,
+      package_desc: packageDesc.value.trim() || null,
+      colli: colli.value === "" ? null : parseInt(colli.value, 10),
+      weight_kg: weightKg.value === "" ? null : parseFloat(weightKg.value),
+      status: status.value || "created",
+    };
 
     const { data, error } = await sb
       .from("shipments")
-      .select("id, track_code, status, customer_name, colli_count, weight_kg, created_at")
-      .order("created_at", { ascending: false });
+      .insert(payload)
+      .select("id, track_code")
+      .single();
 
-    if (error) {
-      console.error(error);
-      setMsg(elStatus, "Laden mislukt (RLS / netwerk).", "bad");
-      return;
-    }
+    if (error) throw error;
 
-    setMsg(elStatus, "Dashboard geladen ✅", "ok");
+    // altijd event voor status
+    const note = (status.value === "delivered") ? (receivedBy.value.trim() || "") : "";
+    await insertEvent(data.id, status.value, note);
 
-    if (!data || data.length === 0) {
-      elList.innerHTML = `<div class="muted">Nog geen zendingen.</div>`;
-      return;
-    }
-
-    elList.innerHTML = data.map(s => `
-      <div class="list-item">
-        <div style="font-weight:700;">${esc(s.track_code)}</div>
-        <div class="muted">
-          ${esc(s.customer_name || "-")}
-          • Colli: ${s.colli_count ?? "-"}
-          • Kg: ${s.weight_kg ?? "-"}
-        </div>
-      </div>
-    `).join("");
+    return data.track_code;
   }
 
-  // ---------- Create shipment ----------
-  async function createShipment(e) {
-    e.preventDefault();
+  async function updateShipment() {
+    if (!editingShipment) throw new Error("Geen shipment om te wijzigen");
 
-    setMsg(elStatus, "");
+    const newStatus = status.value || editingShipment.status || "created";
 
-    const name = elName.value.trim();
-    if (!name) {
-      setMsg(elStatus, "Vul klantnaam in.", "bad");
-      return;
+    const payload = {
+      customer_name: customerName.value.trim() || null,
+      customer_phone: customerPhone.value.trim() || null,
+      customer_address: customerAddress.value.trim() || null,
+      package_desc: packageDesc.value.trim() || null,
+      colli: colli.value === "" ? null : parseInt(colli.value, 10),
+      weight_kg: weightKg.value === "" ? null : parseFloat(weightKg.value),
+      status: newStatus,
+    };
+
+    const { error } = await sb
+      .from("shipments")
+      .update(payload)
+      .eq("id", editingShipment.id);
+
+    if (error) throw error;
+
+    // als status gewijzigd is: event erbij
+    if (newStatus !== editingShipment.status) {
+      const note = (newStatus === "delivered") ? (receivedBy.value.trim() || "") : "";
+      await insertEvent(editingShipment.id, newStatus, note);
+    } else {
+      // status gelijk: alleen bij delivered kun je toch "afgeleverd aan" nog als event toevoegen
+      if (newStatus === "delivered" && receivedBy.value.trim()) {
+        await insertEvent(editingShipment.id, "delivered", receivedBy.value.trim());
+      }
     }
+  }
 
-    const phone = elPhone.value.trim() || null;
-    const addr = elAddr.value.trim() || null;
+  function escapeHtml(str) {
+    return String(str || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-    const colli = elColli.value === "" ? null : parseInt(elColli.value, 10);
-    const kg = elKg.value === "" ? null : parseFloat(elKg.value);
-
-    if (colli !== null && (Number.isNaN(colli) || colli < 0)) {
-      setMsg(elStatus, "Aantal colli ongeldig.", "bad");
-      return;
-    }
-    if (kg !== null && (Number.isNaN(kg) || kg < 0)) {
-      setMsg(elStatus, "Kg ongeldig.", "bad");
-      return;
-    }
-
-    const status = elStart.value || "created";
+  async function onSave() {
+    setMsg("", "");
+    saveBtn.disabled = true;
 
     try {
-      setMsg(elStatus, "Aanmaken…", "warn");
-      const track = await nextTrackCode();
+      if (!currentUser) throw new Error("Niet ingelogd");
 
-      const { data: ship, error } = await sb
-        .from("shipments")
-        .insert([{
-          track_code: track,
-          status,
-          customer_name: name,
-          customer_phone: phone,
-          customer_address: addr,
-          colli_count: colli,
-          weight_kg: kg
-        }])
-        .select("id")
-        .single();
+      if (!editingShipment) {
+        const code = await createShipment();
+        setMsg(`Zending aangemaakt ✅ Trackcode: ${code}`, "ok");
+      } else {
+        await updateShipment();
+        setMsg("Zending gewijzigd ✅", "ok");
+      }
 
-      if (error) throw error;
-
-      // eerste event (NL note)
-      const note =
-        status === "en_route" ? "Chauffeur is onderweg" :
-        status === "delivered" ? "Zending afgeleverd" :
-        "Zending aangemeld";
-
-      const { error: evErr } = await sb
-        .from("shipment_events")
-        .insert([{ shipment_id: ship.id, event_type: status, note }]);
-
-      if (evErr) throw evErr;
-
-      setMsg(elStatus, `Aangemaakt ✅ ${track}`, "ok");
-      elForm.reset();
-      elPanel.classList.add("hidden");
-      await loadShipments();
-    } catch (err) {
-      console.error(err);
-      setMsg(elStatus, "Aanmaken mislukt (RLS / netwerk).", "bad");
+      closeForm();
+      await listShipments();
+    } catch (e) {
+      console.error(e);
+      setMsg(`Opslaan mislukt: ${e.message || e}`, "bad");
+    } finally {
+      saveBtn.disabled = false;
     }
   }
 
-  // ---------- UI wiring ----------
-  elNewBtn && elNewBtn.addEventListener("click", () => {
-    elPanel.classList.toggle("hidden");
+  // --- Init
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      const ok = await requireAuth();
+      if (!ok) return;
+
+      await listShipments();
+
+      logoutBtn.addEventListener("click", logout);
+      newBtn.addEventListener("click", () => openForm("new"));
+      cancelBtn.addEventListener("click", closeForm);
+      saveBtn.addEventListener("click", onSave);
+
+      // realtime refresh (optioneel)
+      sb.channel("shipments_driver_realtime")
+        .on("postgres_changes", { event: "*", schema: "public", table: "shipments" }, async () => {
+          await listShipments();
+        })
+        .subscribe();
+
+    } catch (e) {
+      console.error(e);
+      setMsg("Fout bij starten dashboard (check console).", "bad");
+    }
   });
-
-  elCancel && elCancel.addEventListener("click", () => {
-    elPanel.classList.add("hidden");
-  });
-
-  elForm && elForm.addEventListener("submit", createShipment);
-
-  // ---------- Init ----------
-  (async function init() {
-    const user = await requireAuth();
-    if (!user) return;
-    await loadShipments();
-  })();
 })();
