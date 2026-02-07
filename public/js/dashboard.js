@@ -1,10 +1,17 @@
 /* public/js/dashboard.js
-   Chauffeur dashboard:
-   - Laadt shipments van ingelogde driver
-   - Nieuwe/Wijzigen via modal
+   Chauffeur dashboard (RLS authenticated):
+   - Laadt shipments voor driver_id = auth.uid()
+   - Nieuwe/Wijzigen
    - Snelle knoppen: Opgehaald / Onderweg / Afgeleverd / Probleem
-   - Afgeleverd: ontvanger + opmerking + handtekening (note JSON)
-   - Probleem: vrije tekst (note)
+   - Afgeleverd: ontvanger + opmerking + (optioneel) handtekening in shipment_events.note (JSON)
+   - Probleem: vrije tekst
+
+   BELANGRIJK: past zich automatisch aan aan jouw kolomnamen:
+   pickup: pickup_address | pickup_addr | pickup
+   dropoff: delivery_address | dropoff_address | dropoff_addr | dropoff
+   type: shipment_type | type
+   colli: colli_count | colli
+   kg: weight_kg | kg | weight
 */
 
 (() => {
@@ -67,28 +74,151 @@
     return data.user;
   }
 
-  async function fetchMyShipments() {
-    const user = await requireUser();
+  // =========================
+  // Slimme kolom-detectie
+  // =========================
+  const COLS = {
+    pickup: ["pickup_address", "pickup_addr", "pickup"],
+    dropoff: ["delivery_address", "dropoff_address", "dropoff_addr", "dropoff"],
+    type: ["shipment_type", "type"],
+    colli: ["colli_count", "colli"],
+    kg: ["weight_kg", "kg", "weight"],
+  };
 
-    // driver_id moet auth.uid() zijn
-    const { data, error } = await sb
-      .from("shipments")
-      .select("*")
-      .eq("driver_id", user.id)
-      .order("updated_at", { ascending: false });
-
-    if (error) throw error;
-    return data || [];
+  function normalizeTrack(code) {
+    return (code || "").trim().toUpperCase();
   }
 
-  async function upsertShipment(payload, id = null) {
-    if (id) {
-      const { error } = await sb.from("shipments").update(payload).eq("id", id);
-      if (error) throw error;
-    } else {
-      const { error } = await sb.from("shipments").insert(payload);
-      if (error) throw error;
+  function pickFirst(obj, keys) {
+    for (const k of keys) {
+      if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
     }
+    return "";
+  }
+
+  function buildPayloadFromForm(user) {
+    const raw = {
+      track_code: normalizeTrack($("#mTrack").value),
+      customer_name: ($("#mCustomer").value || "").trim(),
+      pickup: ($("#mPickup").value || "").trim(),
+      dropoff: ($("#mDropoff").value || "").trim(),
+      type: $("#mType").value || "Doos",
+      colli: Number($("#mColli").value || 0),
+      kg: Number($("#mKg").value || 0),
+      status: $("#mStatus").value || "created",
+    };
+
+    if (!raw.track_code) throw new Error("Trackcode is verplicht.");
+    if (!raw.customer_name) throw new Error("Klantnaam is verplicht.");
+
+    return {
+      driver_id: user.id,
+      track_code: raw.track_code,
+      customer_name: raw.customer_name,
+      __pickup: raw.pickup,
+      __dropoff: raw.dropoff,
+      __type: raw.type,
+      __colli: raw.colli,
+      __kg: raw.kg,
+      status: raw.status,
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  function variantsForPayload(base) {
+    // Maak verschillende payloads met alternatieve kolomnamen
+    const out = [];
+
+    for (const pickupKey of COLS.pickup) {
+      for (const dropKey of COLS.dropoff) {
+        for (const typeKey of COLS.type) {
+          for (const colliKey of COLS.colli) {
+            for (const kgKey of COLS.kg) {
+              const p = {
+                driver_id: base.driver_id,
+                track_code: base.track_code,
+                customer_name: base.customer_name,
+                status: base.status,
+                updated_at: base.updated_at,
+              };
+
+              if (base.__pickup) p[pickupKey] = base.__pickup;
+              if (base.__dropoff) p[dropKey] = base.__dropoff;
+              if (base.__type) p[typeKey] = base.__type;
+
+              // colli/kg altijd als nummer
+              p[colliKey] = Number(base.__colli || 0);
+              p[kgKey] = Number(base.__kg || 0);
+
+              out.push(p);
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  async function tryInsertOrUpdate(tableOpFn, payloadVariants) {
+    let lastErr = null;
+
+    for (const payload of payloadVariants) {
+      const { error } = await tableOpFn(payload);
+      if (!error) return; // success
+      lastErr = error;
+
+      // Als fout gaat over "column ... does not exist", probeer volgende variant
+      const msg = (error.message || "").toLowerCase();
+      if (
+        msg.includes("could not find the") ||
+        msg.includes("does not exist") ||
+        msg.includes("schema cache")
+      ) {
+        continue;
+      }
+
+      // Andere fouten (RLS, invalid, etc) meteen stoppen
+      throw error;
+    }
+
+    // Alle varianten geprobeerd
+    throw lastErr || new Error("Onbekende fout bij opslaan.");
+  }
+
+  async function insertShipmentSmart(basePayload) {
+    const variants = variantsForPayload(basePayload);
+    await tryInsertOrUpdate(
+      (payload) => sb.from("shipments").insert(payload),
+      variants
+    );
+
+    // Maak meteen een "created" event (timeline) — dit faalt niet als policy klopt
+    // (Als events insert niet mag, dan werkt zending alsnog; timeline toont dan later updates)
+    try {
+      const { data: sh, error: selErr } = await sb
+        .from("shipments")
+        .select("id, track_code")
+        .eq("track_code", basePayload.track_code)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!selErr && sh?.id) {
+        await sb.from("shipment_events").insert({
+          shipment_id: sh.id,
+          event_type: "created",
+          note: "",
+        });
+      }
+    } catch (_) {}
+  }
+
+  async function updateShipmentSmart(id, basePayload) {
+    const variants = variantsForPayload(basePayload);
+    await tryInsertOrUpdate(
+      (payload) => sb.from("shipments").update(payload).eq("id", id),
+      variants
+    );
   }
 
   async function deleteShipment(id) {
@@ -97,14 +227,12 @@
   }
 
   async function setStatusAndEvent(shipmentId, newStatus, eventType, note = "") {
-    // update shipments
     const { error: uErr } = await sb
       .from("shipments")
       .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq("id", shipmentId);
     if (uErr) throw uErr;
 
-    // add event
     const { error: eErr } = await sb.from("shipment_events").insert({
       shipment_id: shipmentId,
       event_type: eventType,
@@ -164,7 +292,6 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
     }
     function getDataUrl() {
-      // als canvas leeg is, return ""
       const blank = document.createElement("canvas");
       blank.width = canvas.width;
       blank.height = canvas.height;
@@ -175,6 +302,9 @@
     return { clear, getDataUrl };
   }
 
+  // =========================
+  // UI state
+  // =========================
   let currentShipments = [];
   let editingId = null;
 
@@ -189,8 +319,9 @@
 
     tbody.innerHTML = rows
       .map((s) => {
-        const colli = s.colli_count ?? s.colli ?? "";
-        const kg = s.weight_kg ?? s.kg ?? "";
+        const colli = pickFirst(s, COLS.colli) ?? "";
+        const kg = pickFirst(s, COLS.kg) ?? "";
+
         return `
         <tr>
           <td>${esc(s.track_code || "")}</td>
@@ -216,6 +347,19 @@
     });
   }
 
+  async function fetchMyShipments() {
+    const user = await requireUser();
+
+    const { data, error } = await sb
+      .from("shipments")
+      .select("*")
+      .eq("driver_id", user.id)
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  }
+
   // ===== Ship modal (new/edit) =====
   function openShipModal(mode, shipment = null) {
     const modal = $("#dvkShipModal");
@@ -228,11 +372,13 @@
 
     $("#mTrack").value = shipment?.track_code || "";
     $("#mCustomer").value = shipment?.customer_name || "";
-    $("#mPickup").value = shipment?.pickup_address || shipment?.pickup_addr || "";
-    $("#mDropoff").value = shipment?.dropoff_address || shipment?.delivery_address || shipment?.dropoff_addr || "";
-    $("#mType").value = shipment?.shipment_type || shipment?.type || "Doos";
-    $("#mColli").value = shipment?.colli_count ?? shipment?.colli ?? 1;
-    $("#mKg").value = shipment?.weight_kg ?? shipment?.kg ?? 0;
+
+    $("#mPickup").value = pickFirst(shipment, COLS.pickup) || "";
+    $("#mDropoff").value = pickFirst(shipment, COLS.dropoff) || "";
+
+    $("#mType").value = pickFirst(shipment, COLS.type) || "Doos";
+    $("#mColli").value = pickFirst(shipment, COLS.colli) ?? 1;
+    $("#mKg").value = pickFirst(shipment, COLS.kg) ?? 0;
     $("#mStatus").value = shipment?.status || "created";
 
     modal.style.display = "block";
@@ -246,8 +392,8 @@
 
   // ===== Delivered modal =====
   const sig = signatureSetup();
-
   let deliveredForId = null;
+
   function openDeliveredModal(shipmentId) {
     deliveredForId = shipmentId;
     $("#dvkRecvName").value = "";
@@ -326,48 +472,34 @@
     }
   }
 
-  // ===== Bind UI =====
   async function bind() {
     if (!sb) {
       showError("supabaseClient ontbreekt. Check supabase-config.js");
       return;
     }
 
-    // logout
     $("#logoutBtn").addEventListener("click", async () => {
       await sb.auth.signOut();
       location.href = "./login.html";
     });
 
-    // New shipment
     $("#newShipmentBtn").addEventListener("click", () => openShipModal("new"));
-
-    // ship modal close/save/delete
     $("#shipModalClose").addEventListener("click", closeShipModal);
 
     $("#shipModalSave").addEventListener("click", async () => {
       try {
         clearError();
         const user = await requireUser();
+        const base = buildPayloadFromForm(user);
 
-        const payload = {
-          driver_id: user.id,
-          track_code: $("#mTrack").value.trim(),
-          customer_name: $("#mCustomer").value.trim(),
-          pickup_address: $("#mPickup").value.trim(),
-          dropoff_address: $("#mDropoff").value.trim(),
-          shipment_type: $("#mType").value,
-          colli_count: Number($("#mColli").value || 0),
-          weight_kg: Number($("#mKg").value || 0),
-          status: $("#mStatus").value,
-          updated_at: new Date().toISOString(),
-        };
+        if (editingId) {
+          await updateShipmentSmart(editingId, base);
+          toast("Opgeslagen ✅");
+        } else {
+          await insertShipmentSmart(base);
+          toast("Zending aangemaakt ✅");
+        }
 
-        if (!payload.track_code) throw new Error("Trackcode is verplicht.");
-        if (!payload.customer_name) throw new Error("Klantnaam is verplicht.");
-
-        await upsertShipment(payload, editingId);
-        toast("Opgeslagen ✅");
         closeShipModal();
         await refresh();
       } catch (e) {
@@ -389,7 +521,7 @@
       }
     });
 
-    // delivered modal
+    // Delivered modal
     $("#dvkSigClear").addEventListener("click", () => sig.clear());
     $("#dvkDeliveredCancel").addEventListener("click", closeDeliveredModal);
 
@@ -397,15 +529,11 @@
       try {
         if (!deliveredForId) return;
 
-        const received_by = $("#dvkRecvName").value.trim();
-        const note = $("#dvkRecvNote").value.trim();
-        const signature = sig.getDataUrl(); // "" als leeg
+        const received_by = ($("#dvkRecvName").value || "").trim();
+        const note = ($("#dvkRecvNote").value || "").trim();
+        const signature = sig.getDataUrl();
 
-        const payload = JSON.stringify({
-          received_by,
-          note,
-          signature, // base64 png (optioneel)
-        });
+        const payload = JSON.stringify({ received_by, note, signature });
 
         await setStatusAndEvent(deliveredForId, "delivered", "delivered", payload);
         toast("Status gezet: Afgeleverd ✅");
@@ -417,13 +545,13 @@
       }
     });
 
-    // problem modal
+    // Problem modal
     $("#dvkProblemCancel").addEventListener("click", closeProblemModal);
 
     $("#dvkProblemSave").addEventListener("click", async () => {
       try {
         if (!problemForId) return;
-        const txt = $("#dvkProblemText").value.trim();
+        const txt = ($("#dvkProblemText").value || "").trim();
         if (!txt) throw new Error("Vul een omschrijving in.");
 
         await setStatusAndEvent(problemForId, "problem", "problem", txt);
@@ -432,7 +560,7 @@
         await refresh();
       } catch (e) {
         console.error("[DVK][dash] problem error:", e);
-        showError(e.message || String(e));
+        showError(e.message || String(e)));
       }
     });
 
