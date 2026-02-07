@@ -2,119 +2,81 @@
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chauffeur login | DVK</title>
-
-  <!-- 1 map terug naar public -->
-  <link rel="stylesheet" href="../public/css/style.css" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chauffeur Login | DVK</title>
+  <link rel="stylesheet" href="../public/css/style.css?v=1" />
 </head>
 
 <body>
-  <main class="wrap">
-    <section class="card" style="max-width:520px;margin:40px auto;">
+  <main class="container">
+    <div class="card" style="max-width:520px;margin:40px auto;">
       <h1>Inloggen</h1>
-      <div class="muted">Demo login – Supabase volgt.</div>
+      <div class="muted" style="margin-bottom:14px;">Demo login – Supabase volgt.</div>
 
-      <form id="loginForm" class="form" style="margin-top:14px;">
-        <label>
-          E-mail
-          <input id="email" type="email" autocomplete="email" required />
-        </label>
+      <label class="label">E-mail</label>
+      <input id="email" class="input" type="email" autocomplete="email" />
 
-        <label>
-          Wachtwoord
-          <input id="password" type="password" autocomplete="current-password" required />
-        </label>
+      <label class="label" style="margin-top:12px;">Wachtwoord</label>
+      <input id="password" class="input" type="password" autocomplete="current-password" />
 
-        <button id="loginBtn" type="submit" class="btn btn-primary" style="width:100%;">
-          Inloggen
-        </button>
+      <button id="loginBtn" class="btn primary" style="margin-top:14px;width:100%;">Inloggen</button>
 
-        <div id="msg" class="msg" style="margin-top:12px;"></div>
+      <div id="msg" class="msg bad" style="display:none;margin-top:12px;"></div>
 
-        <div class="muted" style="margin-top:14px;">
-          Alleen voor chauffeurs van De Vechtse Koeriers
-        </div>
-      </form>
-    </section>
+      <div class="muted" style="margin-top:16px;">
+        Alleen voor chauffeurs van De Vechtse Koeriers
+      </div>
+    </div>
   </main>
 
-  <!-- Supabase CDN -->
+  <!-- 1) Supabase CDN MOET eerst -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Config: 1 map terug -->
-  <script src="../public/js/supabase-config.js"></script>
+  <!-- 2) Dan config (let op: ../ omdat we in /driver/ zitten) -->
+  <script src="../public/js/supabase-config.js?v=1"></script>
 
+  <!-- 3) Dan login logic -->
   <script>
-    // === DVK Chauffeur Login ===
-    const sb = window.supabaseClient;
-
-    const $ = (id) => document.getElementById(id);
-    const msgEl = $("msg");
-
-    function setMsg(text, type = "ok") {
-      msgEl.textContent = text || "";
-      msgEl.className = "msg " + (type === "bad" ? "bad" : type === "warn" ? "warn" : "ok");
-    }
-
-    function disable(formDisabled) {
-      $("loginBtn").disabled = formDisabled;
-      $("email").disabled = formDisabled;
-      $("password").disabled = formDisabled;
-    }
-
-    // Veilig: base URL voor GitHub Pages project
-    // zorgt dat redirect altijd naar /dvk-track-trace/driver/dashboard.html gaat.
-    function getDashboardUrl() {
-      const base = window.location.origin + window.location.pathname.replace(/\/driver\/login\.html.*$/, "");
-      return base + "/driver/dashboard.html";
-    }
-
-    async function ensureAlreadyLoggedIn() {
-      if (!sb) {
-        setMsg("Supabase client ontbreekt. Check supabase-config.js", "bad");
-        return;
-      }
-      const { data } = await sb.auth.getSession();
-      if (data?.session) {
-        window.location.href = getDashboardUrl();
-      }
-    }
-
-    $("loginForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-      setMsg("");
+    (async () => {
+      const sb = window.sb;
+      const msgEl = document.getElementById("msg");
+      const show = (t) => { msgEl.style.display="block"; msgEl.textContent=t; };
+      const hide = () => { msgEl.style.display="none"; msgEl.textContent=""; };
 
       if (!sb) {
-        setMsg("Supabase client ontbreekt. Check supabase-config.js", "bad");
+        show("Supabase client ontbreekt. Check supabase-config.js");
         return;
       }
 
-      const email = $("email").value.trim();
-      const password = $("password").value;
-
-      if (!email || !password) {
-        setMsg("Vul e-mail en wachtwoord in.", "warn");
-        return;
-      }
-
-      disable(true);
+      // Als al ingelogd -> door naar dashboard
       try {
+        const { data } = await sb.auth.getSession();
+        if (data?.session?.user) {
+          location.href = "./dashboard.html";
+          return;
+        }
+      } catch (_) {}
+
+      document.getElementById("loginBtn").addEventListener("click", async () => {
+        hide();
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+
+        if (!email || !password) {
+          show("Vul e-mail en wachtwoord in.");
+          return;
+        }
+
         const { data, error } = await sb.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          show("Inloggen mislukt: " + (error.message || String(error)));
+          return;
+        }
 
-        setMsg("Ingelogd ✅", "ok");
-        // naar dashboard
-        window.location.href = getDashboardUrl();
-      } catch (err) {
-        console.error(err);
-        setMsg("Inloggen mislukt. Controleer gegevens of Supabase instellingen.", "bad");
-      } finally {
-        disable(false);
-      }
-    });
-
-    ensureAlreadyLoggedIn();
+        if (data?.user) location.href = "./dashboard.html";
+        else show("Inloggen mislukt: geen user teruggekregen.");
+      });
+    })();
   </script>
 </body>
 </html>
