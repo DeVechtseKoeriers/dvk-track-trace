@@ -4,65 +4,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Track & Trace | De Vechtse Koeriers</title>
-
-  <link rel="stylesheet" href="../public/css/style.css?v=1" />
-
-  <style>
-    /* kleine extra’s voor leesbaarheid */
-    .container { max-width: 980px; margin: 0 auto; padding: 28px 18px; }
-    .card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 18px; }
-    .title { font-size: 28px; font-weight: 800; margin: 0 0 6px; }
-    .subtitle { opacity:.75; margin: 0 0 18px; }
-    .row { display:flex; gap:12px; align-items:center; }
-    .grow { flex:1; }
-    .muted { opacity:.7; }
-    .msg { margin-top: 10px; padding: 10px 12px; border-radius: 10px; border:1px solid rgba(255,255,255,.1); }
-    .msg.ok { border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.10); }
-    .msg.bad { border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.10); }
-    .timeline { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
-    .titem { padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.03); }
-    .titem .t { font-weight: 800; }
-    .titem .d { opacity: .75; margin-top: 2px; }
-    .titem .w { opacity: .65; margin-top: 6px; font-size: 12px; }
-    input, button { height: 44px; border-radius: 12px; }
-    input { width: 100%; padding: 0 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.18); color: #fff; outline: none; }
-    button { padding: 0 16px; border: 1px solid rgba(59,130,246,.35); background: rgba(59,130,246,.9); color:#fff; cursor:pointer; font-weight: 700; }
-    button:disabled { opacity: .55; cursor:not-allowed; }
-    .hr { height: 1px; background: rgba(255,255,255,.08); margin: 16px 0; }
-    .kv { line-height: 1.35; }
-    .kv b { font-weight: 800; }
-  </style>
+  <link rel="stylesheet" href="../public/css/style.css" />
 </head>
-
 <body>
   <main class="container">
     <div class="card">
-      <div class="title">De Vechtse Koeriers</div>
-      <div class="subtitle">Track & Trace</div>
+      <h1>De Vechtse Koeriers</h1>
+      <div class="muted">Track &amp; Trace</div>
 
-      <div class="card" style="padding:16px;">
-        <div style="font-size:22px; font-weight:900; margin-bottom:6px;">Volg je zending</div>
-        <div class="muted" style="margin-bottom:10px;">Vul je trackcode in (bijv. DVK-2026-0001 of DVK-001)</div>
+      <h2 style="margin-top:18px;">Volg je zending</h2>
+      <div class="muted">Vul je trackcode in (bijv. DVK-2026-0001 of DVK-001)</div>
 
-        <div class="row">
-          <div class="grow">
-            <input id="trackInput" placeholder="Bijv. DVK-2026-0001" autocomplete="off" />
-          </div>
-          <button id="searchBtn">Zoeken</button>
-        </div>
+      <div class="row" style="margin-top:12px; gap:10px;">
+        <input id="trackInput" class="input" placeholder="Bijv. DVK-2026-0001" />
+        <button id="searchBtn" class="btn">Zoeken</button>
+      </div>
 
-        <div id="statusMsg" class="msg" style="display:none;"></div>
+      <div id="statusMsg" class="msg" style="margin-top:12px; display:none;"></div>
 
-        <div class="hr"></div>
+      <section style="margin-top:14px;">
+        <div id="result"></div>
+        <div style="font-weight:700; margin-top:16px;">Timeline</div>
+        <div id="timeline" class="timeline" style="margin-top:8px;"></div>
+      </section>
 
-        <div id="result" class="kv"></div>
-
-        <div style="font-weight:900; margin-top:16px;">Timeline</div>
-        <div id="timeline" class="timeline"></div>
-
-        <div class="muted" style="margin-top:14px;">
-          Heb je vragen? Neem contact op met De Vechtse Koeriers.
-        </div>
+      <div class="muted" style="margin-top:14px;">
+        Heb je vragen? Neem contact op met De Vechtse Koeriers.
       </div>
     </div>
   </main>
@@ -70,8 +37,8 @@
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Config + logic (we zitten in /track/, dus 1 map terug) -->
-  <script src="../public/js/supabase-config.js?v=10"></script>
-  <script src="../public/js/track.js?v=10"></script>
+  <!-- Config + logic -->
+  <script src="../public/js/supabase-config.js?v=1"></script>
+  <script src="../public/js/track.js?v=1"></script>
 </body>
 </html>
