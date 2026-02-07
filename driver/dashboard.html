@@ -6,35 +6,38 @@
   <title>Chauffeur Dashboard | DVK</title>
   <link rel="stylesheet" href="../public/css/style.css" />
 </head>
+
 <body>
   <main class="container">
     <header class="header">
       <div>
-        <div class="brand">De Vechtse Koeriers</div>
+        <h1>De Vechtse Koeriers</h1>
         <div class="muted">Chauffeur Dashboard</div>
         <div id="userEmail" class="muted"></div>
       </div>
       <div class="header-actions">
-        <button id="logoutBtn" class="btn btn-secondary">Uitloggen</button>
+        <button id="btnLogout" class="btn btn-ghost">Uitloggen</button>
       </div>
     </header>
 
     <section class="card">
       <div class="row row-between">
-        <div>
-          <h2>Mijn zendingen</h2>
-          <div id="msg" class="msg"></div>
-        </div>
-        <button id="newBtn" class="btn">+ Nieuwe zending</button>
+        <h2>Mijn zendingen</h2>
+        <button id="btnNew" class="btn btn-primary">+ Nieuwe zending</button>
       </div>
 
+      <div id="msg" class="msg" style="display:none;"></div>
+
       <div class="table-wrap">
-        <table class="table" id="shipmentsTable">
+        <table class="table">
           <thead>
             <tr>
               <th>Trackcode</th>
               <th>Klant</th>
               <th>Status</th>
+              <th>Ophaaladres</th>
+              <th>Bezorgadres</th>
+              <th>Type</th>
               <th>Colli</th>
               <th>Kg</th>
               <th>Laatst bijgewerkt</th>
@@ -46,74 +49,89 @@
       </div>
     </section>
 
-    <!-- Create / Edit panel -->
-    <section class="card" id="formCard" style="display:none;">
-      <div class="row row-between">
-        <h2 id="formTitle">Nieuwe zending</h2>
-        <button id="cancelBtn" class="btn btn-secondary">Sluiten</button>
+    <!-- Modal -->
+    <div id="modal" class="modal" style="display:none;">
+      <div class="modal-card">
+        <div class="row row-between">
+          <h3 id="modalTitle">Nieuwe zending</h3>
+          <button id="btnClose" class="btn btn-ghost">Sluiten</button>
+        </div>
+
+        <form id="shipmentForm" class="form">
+          <input type="hidden" id="shipmentId" />
+
+          <div class="grid">
+            <div class="field">
+              <label>Trackcode</label>
+              <input id="trackCode" placeholder="DVK-2026-0001" required />
+            </div>
+
+            <div class="field">
+              <label>Klantnaam</label>
+              <input id="customerName" placeholder="Naam klant" required />
+            </div>
+
+            <div class="field">
+              <label>Status</label>
+              <select id="status">
+                <option value="created">created</option>
+                <option value="pickup">pickup</option>
+                <option value="in_transit">in_transit</option>
+                <option value="delivered">delivered</option>
+                <option value="problem">problem</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Type zending</label>
+              <select id="shipmentType">
+                <option value="">(kies)</option>
+                <option value="Doos">Doos</option>
+                <option value="Brief">Brief</option>
+                <option value="Pallet">Pallet</option>
+                <option value="Koel/vers">Koel/vers</option>
+                <option value="Overig">Overig</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>Ophaaladres</label>
+              <input id="pickupAddress" placeholder="Straat, nr, postcode, plaats" />
+            </div>
+
+            <div class="field">
+              <label>Bezorgadres</label>
+              <input id="deliveryAddress" placeholder="Straat, nr, postcode, plaats" />
+            </div>
+
+            <div class="field">
+              <label>Aantal colli</label>
+              <input id="colliCount" type="number" min="0" step="1" placeholder="0" />
+            </div>
+
+            <div class="field">
+              <label>Gewicht (kg)</label>
+              <input id="weightKg" type="number" min="0" step="0.1" placeholder="0.0" />
+            </div>
+          </div>
+
+          <div class="row row-between" style="margin-top:14px;">
+            <button id="btnDelete" type="button" class="btn btn-danger" style="display:none;">Verwijderen</button>
+            <div class="row">
+              <button type="button" id="btnCancel" class="btn btn-ghost">Annuleren</button>
+              <button type="submit" id="btnSave" class="btn btn-primary">Opslaan</button>
+            </div>
+          </div>
+        </form>
       </div>
-
-      <div class="grid">
-        <div>
-          <label>Klantnaam</label>
-          <input id="customerName" class="input" placeholder="Bijv. Pieter Jansen" />
-        </div>
-
-        <div>
-          <label>Telefoon</label>
-          <input id="customerPhone" class="input" placeholder="Bijv. 06..." />
-        </div>
-
-        <div class="grid-col-2">
-          <label>Adres (afleveradres)</label>
-          <input id="customerAddress" class="input" placeholder="Straat, huisnr, plaats" />
-        </div>
-
-        <div class="grid-col-2">
-          <label>Omschrijving / pakketgegevens</label>
-          <input id="packageDesc" class="input" placeholder="Bijv. gekoelde box, levensmiddelen..." />
-        </div>
-
-        <div>
-          <label>Aantal colli</label>
-          <input id="colli" class="input" type="number" min="0" step="1" placeholder="0" />
-        </div>
-
-        <div>
-          <label>Gewicht (kg)</label>
-          <input id="weightKg" class="input" type="number" min="0" step="0.1" placeholder="0.0" />
-        </div>
-
-        <div>
-          <label>Status</label>
-          <select id="status" class="input">
-            <option value="created">Aangemeld</option>
-            <option value="en_route">Onderweg</option>
-            <option value="delivered">Afgeleverd</option>
-            <option value="problem">Probleem</option>
-          </select>
-        </div>
-
-        <div>
-          <label>Afgeleverd aan (alleen bij Afgeleverd)</label>
-          <input id="receivedBy" class="input" placeholder="Bijv. Lorena Wiebes" />
-        </div>
-      </div>
-
-      <div class="row row-between" style="margin-top:14px;">
-        <div class="muted" id="trackPreview"></div>
-        <div class="row">
-          <button id="saveBtn" class="btn">Opslaan</button>
-        </div>
-      </div>
-    </section>
+    </div>
   </main>
 
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Wij zitten in /driver/, dus 1 map terug -->
-  <script src="../public/js/supabase-config.js"></script>
-  <script src="../public/js/dashboard.js"></script>
+  <!-- Config + dashboard logic -->
+  <script src="../public/js/supabase-config.js?v=1"></script>
+  <script src="../public/js/dashboard.js?v=1"></script>
 </body>
 </html>
