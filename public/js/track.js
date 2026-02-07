@@ -1,42 +1,22 @@
 /* public/js/track.js
    Track & Trace:
    - zoekt shipment op track_code
-   - haalt events op uit shipment_events
-   - realtime updates (optioneel)
-   - status in NL
-   - toont: ophaaladres, bezorgadres, type, colli, kg
-   Vereist IDs in HTML:
-   #trackInput #searchBtn #statusMsg #result #timeline
+   - events uit shipment_events
+   - status NL
+   - adressen/type/colli/kg met kolom-varianten
 */
 
 (() => {
   const sb = window.sb;
-
   const $ = (sel) => document.querySelector(sel);
 
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
-  function setMsg(text, type = "ok") {
-    const el = $("#statusMsg");
-    if (!el) return;
-    el.style.display = "block";
-    el.textContent = text || "";
-    el.className = "msg " + (type === "bad" ? "bad" : "ok");
-  }
-
-  function clearMsg() {
-    const el = $("#statusMsg");
-    if (!el) return;
-    el.style.display = "none";
-    el.textContent = "";
-  }
+  const COLS = {
+    pickup: ["pickup_address", "pickup_addr", "pickup"],
+    dropoff: ["delivery_address", "dropoff_address", "dropoff_addr", "dropoff"],
+    type: ["shipment_type", "type"],
+    colli: ["colli_count", "colli"],
+    kg: ["weight_kg", "kg", "weight"],
+  };
 
   const STATUS_NL = {
     created: "Aangemeld",
@@ -57,6 +37,36 @@
     note: { title: "Update", desc: "Statusupdate" },
   };
 
+  function pickFirst(obj, keys) {
+    for (const k of keys) {
+      if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
+    }
+    return "-";
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function setMsg(text, type = "ok") {
+    const el = $("#statusMsg");
+    if (!el) return;
+    el.style.display = "block";
+    el.textContent = text || "";
+    el.className = "msg " + (type === "bad" ? "bad" : "ok");
+  }
+  function clearMsg() {
+    const el = $("#statusMsg");
+    if (!el) return;
+    el.style.display = "none";
+    el.textContent = "";
+  }
+
   function fmtDate(iso) {
     if (!iso) return "";
     const d = new Date(iso);
@@ -65,11 +75,7 @@
   }
 
   function safeJsonParse(str) {
-    try {
-      return JSON.parse(str);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(str); } catch { return null; }
   }
 
   function statusLabel(code) {
@@ -80,34 +86,11 @@
     const result = $("#result");
     if (!result) return;
 
-    const pickupAddr =
-      shipment.pickup_address ||
-      shipment.pickup_addr ||
-      shipment.pickup ||
-      "-";
-
-    const dropoffAddr =
-      shipment.dropoff_address ||
-      shipment.delivery_address ||
-      shipment.dropoff_addr ||
-      shipment.dropoff ||
-      "-";
-
-    const type =
-      shipment.shipment_type ||
-      shipment.type ||
-      "-";
-
-    const colli =
-      shipment.colli_count ??
-      shipment.colli ??
-      "-";
-
-    const kg =
-      shipment.weight_kg ??
-      shipment.kg ??
-      shipment.weight ??
-      "-";
+    const pickupAddr = pickFirst(shipment, COLS.pickup);
+    const dropoffAddr = pickFirst(shipment, COLS.dropoff);
+    const type = pickFirst(shipment, COLS.type);
+    const colli = pickFirst(shipment, COLS.colli);
+    const kg = pickFirst(shipment, COLS.kg);
 
     result.innerHTML = `
       <div class="box">
@@ -125,24 +108,33 @@
     `;
   }
 
-  function renderTimeline(events) {
+  function renderTimeline(events, shipment) {
     const tl = $("#timeline");
     if (!tl) return;
 
+    // Als er geen events zijn, toon iig created op basis van shipment.created_at
     if (!events || events.length === 0) {
+      if (shipment?.created_at) {
+        tl.innerHTML = `
+          <div class="timeline-item">
+            <div class="timeline-title">Aangemeld</div>
+            <div class="muted">Zending aangemeld</div>
+            <div class="muted">${escapeHtml(fmtDate(shipment.created_at))}</div>
+          </div>
+        `;
+        return;
+      }
       tl.innerHTML = `<div class="muted">Nog geen statusupdates beschikbaar.</div>`;
       return;
     }
 
-    // oud -> nieuw
     const sorted = [...events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
 
-    const items = sorted.map((ev) => {
+    tl.innerHTML = sorted.map((ev) => {
       const key = ev.event_type || "note";
       const meta = EVENT_NL[key] || { title: key, desc: "" };
       const when = fmtDate(ev.created_at);
 
-      // delivered note JSON: {received_by, note, signature}
       let extra = "";
       if (key === "delivered" && ev.note) {
         const j = safeJsonParse(ev.note);
@@ -163,9 +155,7 @@
           <div class="muted">${escapeHtml(when)}</div>
         </div>
       `;
-    });
-
-    tl.innerHTML = items.join("");
+    }).join("");
   }
 
   async function fetchShipmentByTrackCode(trackCode) {
@@ -175,7 +165,6 @@
       .eq("track_code", trackCode)
       .limit(1)
       .maybeSingle();
-
     if (error) throw error;
     return data;
   }
@@ -186,16 +175,13 @@
       .select("id, shipment_id, event_type, note, created_at")
       .eq("shipment_id", shipmentId)
       .order("created_at", { ascending: true });
-
     if (error) throw error;
     return data || [];
   }
 
   let currentSub = null;
   function stopRealtime() {
-    try {
-      if (currentSub) sb.removeChannel(currentSub);
-    } catch {}
+    try { if (currentSub) sb.removeChannel(currentSub); } catch {}
     currentSub = null;
   }
 
@@ -203,8 +189,7 @@
     stopRealtime();
     currentSub = sb
       .channel(`shipment_events:${shipmentId}`)
-      .on(
-        "postgres_changes",
+      .on("postgres_changes",
         { event: "*", schema: "public", table: "shipment_events", filter: `shipment_id=eq.${shipmentId}` },
         () => onUpdate()
       )
@@ -213,8 +198,8 @@
 
   async function runSearch() {
     try {
-      const trackCode = ($("#trackInput")?.value || "").trim();
-      clearMsg();
+      const trackCode = ($("#trackInput")?.value || "").trim().toUpperCase();
+      clearReminder();
 
       const result = $("#result");
       const tl = $("#timeline");
@@ -238,22 +223,25 @@
       renderShipment(shipment);
 
       const events = await fetchEventsForShipment(shipment.id);
-      renderTimeline(events);
+      renderTimeline(events, shipment);
 
       setMsg("Gevonden ✅ (realtime actief)", "ok");
 
       startRealtime(shipment.id, async () => {
-        const evs = await fetchEventsForShipment(shipment.id);
-        renderTimeline(evs);
-
-        // status opnieuw ophalen voor NL label up-to-date
         const refreshed = await fetchShipmentByTrackCode(trackCode);
+        const evs = await fetchEventsForShipment(shipment.id);
         if (refreshed) renderShipment(refreshed);
+        renderTimeline(evs, refreshed || shipment);
       });
     } catch (e) {
       console.error("[DVK][track] error:", e);
       setMsg("Fout bij laden (check console).", "bad");
     }
+  }
+
+  function clearReminder() {
+    // alias voor clearMsg (Safari users zien soms dubbel)
+    clearMsg();
   }
 
   function bind() {
