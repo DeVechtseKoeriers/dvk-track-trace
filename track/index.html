@@ -1,4 +1,4 @@
-<!doctype html>
+<<!doctype html>
 <html lang="nl">
 <head>
   <meta charset="utf-8" />
@@ -7,26 +7,27 @@
   <link rel="stylesheet" href="../public/css/style.css" />
 </head>
 <body>
-  <main class="container">
+  <main class="wrap">
     <header class="header">
-      <div>
-        <div class="brand">De Vechtse Koeriers</div>
-        <div class="muted">Track &amp; Trace</div>
+      <div class="brand">
+        <div class="brand-title">De Vechtse Koeriers</div>
+        <div class="brand-sub">Track &amp; Trace</div>
       </div>
     </header>
 
     <section class="card">
       <h1>Volg je zending</h1>
-      <div class="muted">Vul je trackcode in (bijv. DVK-2026-0001 of DVK-001)</div>
+      <p class="muted">Vul je trackcode in (bijv. DVK-2026-0001 of DVK-001)</p>
 
-      <div class="row" style="margin-top:10px;">
-        <input id="trackInput" class="input" placeholder="Bijv. DVK-2026-0001" />
+      <div class="row">
+        <input id="trackInput" class="input" placeholder="Bijv. DVK-2026-0001" autocomplete="off" />
         <button id="searchBtn" class="btn">Zoeken</button>
       </div>
 
-      <div id="statusMsg" class="msg" style="margin-top:12px;"></div>
+      <div id="statusMsg" class="msg" style="margin-top:12px; display:none;"></div>
 
-      <div id="result" style="margin-top:12px;"></div>
+      <!-- Resultaat komt hier -->
+      <div id="result" style="margin-top:14px;"></div>
 
       <div class="muted" style="margin-top:14px;">
         Heb je vragen? Neem contact op met De Vechtse Koeriers.
@@ -37,7 +38,7 @@
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Wij zitten in /track/, dus 1 map terug -->
+  <!-- Config + logic (we zitten in /track/, dus 1 map terug) -->
   <script src="../public/js/supabase-config.js"></script>
   <script src="../public/js/track.js"></script>
 </body>
