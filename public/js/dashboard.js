@@ -1,571 +1,523 @@
 /* public/js/dashboard.js
-   Chauffeur dashboard (RLS authenticated):
-   - Laadt shipments voor driver_id = auth.uid()
-   - Nieuwe/Wijzigen
-   - Snelle knoppen: Opgehaald / Onderweg / Afgeleverd / Probleem
-   - Afgeleverd: ontvanger + opmerking + (optioneel) handtekening in shipment_events.note (JSON)
-   - Probleem: vrije tekst
-
-   BELANGRIJK: past zich automatisch aan aan jouw kolomnamen:
-   pickup: pickup_address | pickup_addr | pickup
-   dropoff: delivery_address | dropoff_address | dropoff_addr | dropoff
-   type: shipment_type | type
-   colli: colli_count | colli
-   kg: weight_kg | kg | weight
+   - Auth guard: geen sessie => redirect login
+   - Laadt "mijn zendingen" (driver_id = auth.uid())
+   - Nieuwe zending aanmaken (met trackcode)
+   - Snelle status knoppen: Opgehaald / Onderweg / Afgeleverd / Probleem
+   - Afgeleverd: ontvanger + notitie + handtekening (dataURL)
 */
 
 (() => {
   const sb = window.sb;
-  const $ = (s) => document.querySelector(s);
 
-  const STATUS_NL = {
-    created: "Aangemeld",
-    pickup: "Opgehaald",
-    in_transit: "Onderweg",
-    en_route: "Onderweg",
-    delivered: "Afgeleverd",
-    problem: "Probleem",
+  const $ = (id) => document.getElementById(id);
+
+  const el = {
+    userEmail: $("userEmail"),
+    msg: $("msg"),
+    loading: $("loading"),
+    tbody: $("tbody"),
+
+    modalBackdrop: $("modalBackdrop"),
+    modalTitle: $("modalTitle"),
+    closeModalBtn: $("closeModalBtn"),
+    modalMsg: $("modalMsg"),
+
+    newBtn: $("newBtn"),
+    logoutBtn: $("logoutBtn"),
+
+    createBox: $("createBox"),
+    createBtn: $("createBtn"),
+    fCustomer: $("fCustomer"),
+    fType: $("fType"),
+    fPickup: $("fPickup"),
+    fDelivery: $("fDelivery"),
+    fColli: $("fColli"),
+    fKg: $("fKg"),
+    fNote: $("fNote"),
+
+    actionBox: $("actionBox"),
+    aTrack: $("aTrack"),
+    btnPickup: $("btnPickup"),
+    btnTransit: $("btnTransit"),
+    btnDelivered: $("btnDelivered"),
+    btnProblem: $("btnProblem"),
+
+    deliveredBox: $("deliveredBox"),
+    dReceiver: $("dReceiver"),
+    dNote: $("dNote"),
+    sigCanvas: $("sigCanvas"),
+    clearSigBtn: $("clearSigBtn"),
+    confirmDeliveredBtn: $("confirmDeliveredBtn"),
+
+    problemBox: $("problemBox"),
+    pNote: $("pNote"),
+    confirmProblemBtn: $("confirmProblemBtn"),
   };
 
-  function fmtDate(iso) {
+  const state = {
+    user: null,
+    shipments: [],
+    activeShipment: null,
+    sig: { drawing: false, lastX: 0, lastY: 0 },
+  };
+
+  const log = (...a) => console.log("[DVK][dashboard]", ...a);
+  const showMsg = (text) => { el.msg.style.display = "block"; el.msg.textContent = text; };
+  const hideMsg = () => { el.msg.style.display = "none"; el.msg.textContent = ""; };
+
+  const showModalMsg = (text) => { el.modalMsg.style.display = "block"; el.modalMsg.textContent = text; };
+  const hideModalMsg = () => { el.modalMsg.style.display = "none"; el.modalMsg.textContent = ""; };
+
+  const openModal = () => { el.modalBackdrop.style.display = "flex"; };
+  const closeModal = () => {
+    el.modalBackdrop.style.display = "none";
+    hideModalMsg();
+    // reset boxes
+    el.createBox.style.display = "block";
+    el.actionBox.style.display = "none";
+    el.deliveredBox.style.display = "none";
+    el.problemBox.style.display = "none";
+    state.activeShipment = null;
+  };
+
+  const formatDate = (iso) => {
     if (!iso) return "-";
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-
-  function toast(msg, type = "ok") {
-    const el = $("#dvkToast");
-    if (!el) return;
-    el.style.display = "block";
-    el.textContent = msg;
-    el.className = "msg " + (type === "bad" ? "bad" : "ok");
-    clearTimeout(window.__t);
-    window.__t = setTimeout(() => (el.style.display = "none"), 3200);
-  }
-
-  function showError(msg) {
-    const el = $("#shipmentsError");
-    if (!el) return;
-    el.style.display = "block";
-    el.textContent = msg;
-  }
-  function clearError() {
-    const el = $("#shipmentsError");
-    if (!el) return;
-    el.style.display = "none";
-    el.textContent = "";
-  }
-
-  function esc(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
-  }
-
-  async function requireUser() {
-    if (!sb) throw new Error("supabaseClient ontbreekt. Check supabase-config.js");
-    const { data, error } = await sb.auth.getUser();
-    if (error) throw error;
-    if (!data?.user) throw new Error("Niet ingelogd.");
-    return data.user;
-  }
-
-  // =========================
-  // Slimme kolom-detectie
-  // =========================
-  const COLS = {
-    pickup: ["pickup_address", "pickup_addr", "pickup"],
-    dropoff: ["delivery_address", "dropoff_address", "dropoff_addr", "dropoff"],
-    type: ["shipment_type", "type"],
-    colli: ["colli_count", "colli"],
-    kg: ["weight_kg", "kg", "weight"],
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString("nl-NL");
+    } catch {
+      return iso;
+    }
   };
 
-  function normalizeTrack(code) {
-    return (code || "").trim().toUpperCase();
-  }
+  const statusNL = (s) => {
+    const v = String(s || "").toLowerCase();
+    if (v === "created") return "Aangemeld";
+    if (v === "pickup") return "Opgehaald";
+    if (v === "in_transit") return "Onderweg";
+    if (v === "delivered") return "Afgeleverd";
+    if (v === "problem") return "Probleem";
+    return s || "-";
+  };
 
-  function pickFirst(obj, keys) {
-    for (const k of keys) {
-      if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
-    }
-    return "";
-  }
+  const escapeHtml = (t) =>
+    String(t ?? "").replace(/[&<>"']/g, (m) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[m]));
 
-  function buildPayloadFromForm(user) {
-    const raw = {
-      track_code: normalizeTrack($("#mTrack").value),
-      customer_name: ($("#mCustomer").value || "").trim(),
-      pickup: ($("#mPickup").value || "").trim(),
-      dropoff: ($("#mDropoff").value || "").trim(),
-      type: $("#mType").value || "Doos",
-      colli: Number($("#mColli").value || 0),
-      kg: Number($("#mKg").value || 0),
-      status: $("#mStatus").value || "created",
-    };
+  const genTrackCode = () => {
+    // DVK-YYYY-XXXX
+    const y = new Date().getFullYear();
+    const rnd = Math.floor(1000 + Math.random() * 9000);
+    return `DVK-${y}-${rnd}`;
+  };
 
-    if (!raw.track_code) throw new Error("Trackcode is verplicht.");
-    if (!raw.customer_name) throw new Error("Klantnaam is verplicht.");
-
-    return {
-      driver_id: user.id,
-      track_code: raw.track_code,
-      customer_name: raw.customer_name,
-      __pickup: raw.pickup,
-      __dropoff: raw.dropoff,
-      __type: raw.type,
-      __colli: raw.colli,
-      __kg: raw.kg,
-      status: raw.status,
-      updated_at: new Date().toISOString(),
-    };
-  }
-
-  function variantsForPayload(base) {
-    // Maak verschillende payloads met alternatieve kolomnamen
-    const out = [];
-
-    for (const pickupKey of COLS.pickup) {
-      for (const dropKey of COLS.dropoff) {
-        for (const typeKey of COLS.type) {
-          for (const colliKey of COLS.colli) {
-            for (const kgKey of COLS.kg) {
-              const p = {
-                driver_id: base.driver_id,
-                track_code: base.track_code,
-                customer_name: base.customer_name,
-                status: base.status,
-                updated_at: base.updated_at,
-              };
-
-              if (base.__pickup) p[pickupKey] = base.__pickup;
-              if (base.__dropoff) p[dropKey] = base.__dropoff;
-              if (base.__type) p[typeKey] = base.__type;
-
-              // colli/kg altijd als nummer
-              p[colliKey] = Number(base.__colli || 0);
-              p[kgKey] = Number(base.__kg || 0);
-
-              out.push(p);
-            }
-          }
-        }
-      }
-    }
-    return out;
-  }
-
-  async function tryInsertOrUpdate(tableOpFn, payloadVariants) {
-    let lastErr = null;
-
-    for (const payload of payloadVariants) {
-      const { error } = await tableOpFn(payload);
-      if (!error) return; // success
-      lastErr = error;
-
-      // Als fout gaat over "column ... does not exist", probeer volgende variant
-      const msg = (error.message || "").toLowerCase();
-      if (
-        msg.includes("could not find the") ||
-        msg.includes("does not exist") ||
-        msg.includes("schema cache")
-      ) {
-        continue;
-      }
-
-      // Andere fouten (RLS, invalid, etc) meteen stoppen
-      throw error;
+  async function requireAuth() {
+    if (!sb) {
+      showMsg("Supabase client ontbreekt. Check supabase-config.js");
+      throw new Error("no supabase client");
     }
 
-    // Alle varianten geprobeerd
-    throw lastErr || new Error("Onbekende fout bij opslaan.");
-  }
-
-  async function insertShipmentSmart(basePayload) {
-    const variants = variantsForPayload(basePayload);
-    await tryInsertOrUpdate(
-      (payload) => sb.from("shipments").insert(payload),
-      variants
-    );
-
-    // Maak meteen een "created" event (timeline) — dit faalt niet als policy klopt
-    // (Als events insert niet mag, dan werkt zending alsnog; timeline toont dan later updates)
-    try {
-      const { data: sh, error: selErr } = await sb
-        .from("shipments")
-        .select("id, track_code")
-        .eq("track_code", basePayload.track_code)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (!selErr && sh?.id) {
-        await sb.from("shipment_events").insert({
-          shipment_id: sh.id,
-          event_type: "created",
-          note: "",
-        });
-      }
-    } catch (_) {}
-  }
-
-  async function updateShipmentSmart(id, basePayload) {
-    const variants = variantsForPayload(basePayload);
-    await tryInsertOrUpdate(
-      (payload) => sb.from("shipments").update(payload).eq("id", id),
-      variants
-    );
-  }
-
-  async function deleteShipment(id) {
-    const { error } = await sb.from("shipments").delete().eq("id", id);
+    const { data, error } = await sb.auth.getSession();
     if (error) throw error;
-  }
 
-  async function setStatusAndEvent(shipmentId, newStatus, eventType, note = "") {
-    const { error: uErr } = await sb
-      .from("shipments")
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq("id", shipmentId);
-    if (uErr) throw uErr;
-
-    const { error: eErr } = await sb.from("shipment_events").insert({
-      shipment_id: shipmentId,
-      event_type: eventType,
-      note: note || "",
-    });
-    if (eErr) throw eErr;
-  }
-
-  // ===== Delivered modal + signature =====
-  function signatureSetup() {
-    const canvas = $("#dvkSigCanvas");
-    if (!canvas) return { getDataUrl: () => "", clear: () => {} };
-
-    const ctx = canvas.getContext("2d");
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-
-    let drawing = false;
-    let last = null;
-
-    function pos(e) {
-      const r = canvas.getBoundingClientRect();
-      const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
-      const y = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
-      return { x, y };
+    const user = data?.session?.user;
+    if (!user) {
+      // geen sessie => terug naar login
+      location.href = "./login.html";
+      throw new Error("no session");
     }
 
-    function start(e) {
-      drawing = true;
-      last = pos(e);
-      e.preventDefault();
-    }
-    function move(e) {
-      if (!drawing) return;
-      const p = pos(e);
-      ctx.beginPath();
-      ctx.moveTo(last.x, last.y);
-      ctx.lineTo(p.x, p.y);
-      ctx.stroke();
-      last = p;
-      e.preventDefault();
-    }
-    function stop() {
-      drawing = false;
-      last = null;
-    }
-
-    canvas.addEventListener("mousedown", start);
-    canvas.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", stop);
-
-    canvas.addEventListener("touchstart", start, { passive: false });
-    canvas.addEventListener("touchmove", move, { passive: false });
-    canvas.addEventListener("touchend", stop);
-
-    function clear() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-    function getDataUrl() {
-      const blank = document.createElement("canvas");
-      blank.width = canvas.width;
-      blank.height = canvas.height;
-      if (canvas.toDataURL() === blank.toDataURL()) return "";
-      return canvas.toDataURL("image/png");
-    }
-
-    return { clear, getDataUrl };
-  }
-
-  // =========================
-  // UI state
-  // =========================
-  let currentShipments = [];
-  let editingId = null;
-
-  function renderTable(rows) {
-    const tbody = $("#shipmentsTbody");
-    if (!tbody) return;
-
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="muted">Geen zendingen.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = rows
-      .map((s) => {
-        const colli = pickFirst(s, COLS.colli) ?? "";
-        const kg = pickFirst(s, COLS.kg) ?? "";
-
-        return `
-        <tr>
-          <td>${esc(s.track_code || "")}</td>
-          <td>${esc(s.customer_name || "")}</td>
-          <td>${esc(STATUS_NL[s.status] || s.status || "")}</td>
-          <td>${esc(colli)}</td>
-          <td>${esc(kg)}</td>
-          <td>${esc(fmtDate(s.updated_at || s.created_at))}</td>
-          <td style="white-space:nowrap;">
-            <button class="btn small" data-act="edit" data-id="${s.id}">Wijzigen</button>
-            <button class="btn small" data-act="pickup" data-id="${s.id}">Opgehaald</button>
-            <button class="btn small" data-act="transit" data-id="${s.id}">Onderweg</button>
-            <button class="btn small" data-act="delivered" data-id="${s.id}">Afgeleverd</button>
-            <button class="btn small danger" data-act="problem" data-id="${s.id}">Probleem</button>
-          </td>
-        </tr>
-      `;
-      })
-      .join("");
-
-    tbody.querySelectorAll("button[data-act]").forEach((btn) => {
-      btn.addEventListener("click", () => handleAction(btn.dataset.act, btn.dataset.id));
-    });
+    state.user = user;
+    el.userEmail.textContent = user.email || "-";
+    hideMsg();
   }
 
   async function fetchMyShipments() {
-    const user = await requireUser();
-
+    // verwacht schema met deze kolommen (vaste set)
     const { data, error } = await sb
       .from("shipments")
-      .select("*")
-      .eq("driver_id", user.id)
+      .select("id, track_code, customer_name, status, colli_count, weight_kg, updated_at, pickup_address, delivery_address, shipment_type, driver_id")
+      .eq("driver_id", state.user.id)
       .order("updated_at", { ascending: false });
 
     if (error) throw error;
-    return data || [];
+
+    state.shipments = data || [];
+    renderShipments();
   }
 
-  // ===== Ship modal (new/edit) =====
-  function openShipModal(mode, shipment = null) {
-    const modal = $("#dvkShipModal");
-    if (!modal) return;
+  function renderShipments() {
+    el.loading.style.display = "none";
 
-    $("#shipModalTitle").textContent = mode === "edit" ? "Zending wijzigen" : "Nieuwe zending";
-    $("#shipModalDelete").style.display = mode === "edit" ? "inline-block" : "none";
-
-    editingId = shipment?.id || null;
-
-    $("#mTrack").value = shipment?.track_code || "";
-    $("#mCustomer").value = shipment?.customer_name || "";
-
-    $("#mPickup").value = pickFirst(shipment, COLS.pickup) || "";
-    $("#mDropoff").value = pickFirst(shipment, COLS.dropoff) || "";
-
-    $("#mType").value = pickFirst(shipment, COLS.type) || "Doos";
-    $("#mColli").value = pickFirst(shipment, COLS.colli) ?? 1;
-    $("#mKg").value = pickFirst(shipment, COLS.kg) ?? 0;
-    $("#mStatus").value = shipment?.status || "created";
-
-    modal.style.display = "block";
-  }
-
-  function closeShipModal() {
-    const modal = $("#dvkShipModal");
-    if (modal) modal.style.display = "none";
-    editingId = null;
-  }
-
-  // ===== Delivered modal =====
-  const sig = signatureSetup();
-  let deliveredForId = null;
-
-  function openDeliveredModal(shipmentId) {
-    deliveredForId = shipmentId;
-    $("#dvkRecvName").value = "";
-    $("#dvkRecvNote").value = "";
-    sig.clear();
-    $("#dvkDeliveredModal").style.display = "block";
-  }
-  function closeDeliveredModal() {
-    $("#dvkDeliveredModal").style.display = "none";
-    deliveredForId = null;
-  }
-
-  // ===== Problem modal =====
-  let problemForId = null;
-  function openProblemModal(shipmentId) {
-    problemForId = shipmentId;
-    $("#dvkProblemText").value = "";
-    $("#dvkProblemModal").style.display = "block";
-  }
-  function closeProblemModal() {
-    $("#dvkProblemModal").style.display = "none";
-    problemForId = null;
-  }
-
-  // ===== Actions =====
-  async function handleAction(act, id) {
-    try {
-      clearError();
-
-      if (act === "edit") {
-        const s = currentShipments.find((x) => x.id === id);
-        openShipModal("edit", s);
-        return;
-      }
-
-      if (act === "pickup") {
-        await setStatusAndEvent(id, "pickup", "pickup", "");
-        toast("Status gezet: Opgehaald ✅");
-        await refresh();
-        return;
-      }
-
-      if (act === "transit") {
-        await setStatusAndEvent(id, "in_transit", "in_transit", "");
-        toast("Status gezet: Onderweg ✅");
-        await refresh();
-        return;
-      }
-
-      if (act === "delivered") {
-        openDeliveredModal(id);
-        return;
-      }
-
-      if (act === "problem") {
-        openProblemModal(id);
-        return;
-      }
-    } catch (e) {
-      console.error("[DVK][dash] action error:", e);
-      showError("Fout: " + (e.message || String(e)));
-    }
-  }
-
-  async function refresh() {
-    try {
-      clearError();
-      const user = await requireUser();
-      $("#userEmail").textContent = user.email || "-";
-
-      currentShipments = await fetchMyShipments();
-      renderTable(currentShipments);
-    } catch (e) {
-      console.error("[DVK][dash] refresh error:", e);
-      showError("Fout bij laden: " + (e.message || String(e)));
-    }
-  }
-
-  async function bind() {
-    if (!sb) {
-      showError("supabaseClient ontbreekt. Check supabase-config.js");
+    if (!state.shipments.length) {
+      el.tbody.innerHTML = `<tr><td colspan="7" class="muted">Geen zendingen.</td></tr>`;
       return;
     }
 
-    $("#logoutBtn").addEventListener("click", async () => {
-      await sb.auth.signOut();
-      location.href = "./login.html";
+    el.tbody.innerHTML = state.shipments.map((s) => {
+      const updated = formatDate(s.updated_at);
+      return `
+        <tr>
+          <td><b>${escapeHtml(s.track_code || "-")}</b></td>
+          <td>${escapeHtml(s.customer_name || "-")}</td>
+          <td>${escapeHtml(statusNL(s.status))}</td>
+          <td>${escapeHtml(s.colli_count ?? "-")}</td>
+          <td>${escapeHtml(s.weight_kg ?? "-")}</td>
+          <td class="row-muted">${escapeHtml(updated)}</td>
+          <td>
+            <div class="actions">
+              <button class="btn" data-act="open" data-id="${s.id}">Wijzigen</button>
+              <button class="btn ok" data-act="pickup" data-id="${s.id}">Opgehaald</button>
+              <button class="btn primary" data-act="transit" data-id="${s.id}">Onderweg</button>
+              <button class="btn ok" data-act="delivered" data-id="${s.id}">Afgeleverd</button>
+              <button class="btn warn" data-act="problem" data-id="${s.id}">Probleem</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    // bind row actions
+    el.tbody.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-id");
+        const act = btn.getAttribute("data-act");
+        const ship = state.shipments.find(x => String(x.id) === String(id));
+        if (!ship) return;
+
+        if (act === "open") openActions(ship);
+        if (act === "pickup") quickStatus(ship, "pickup");
+        if (act === "transit") quickStatus(ship, "in_transit");
+        if (act === "delivered") openDelivered(ship);
+        if (act === "problem") openProblem(ship);
+      });
     });
-
-    $("#newShipmentBtn").addEventListener("click", () => openShipModal("new"));
-    $("#shipModalClose").addEventListener("click", closeShipModal);
-
-    $("#shipModalSave").addEventListener("click", async () => {
-      try {
-        clearError();
-        const user = await requireUser();
-        const base = buildPayloadFromForm(user);
-
-        if (editingId) {
-          await updateShipmentSmart(editingId, base);
-          toast("Opgeslagen ✅");
-        } else {
-          await insertShipmentSmart(base);
-          toast("Zending aangemaakt ✅");
-        }
-
-        closeShipModal();
-        await refresh();
-      } catch (e) {
-        console.error("[DVK][dash] save error:", e);
-        showError(e.message || String(e));
-      }
-    });
-
-    $("#shipModalDelete").addEventListener("click", async () => {
-      try {
-        if (!editingId) return;
-        await deleteShipment(editingId);
-        toast("Verwijderd ✅");
-        closeShipModal();
-        await refresh();
-      } catch (e) {
-        console.error("[DVK][dash] delete error:", e);
-        showError(e.message || String(e));
-      }
-    });
-
-    // Delivered modal
-    $("#dvkSigClear").addEventListener("click", () => sig.clear());
-    $("#dvkDeliveredCancel").addEventListener("click", closeDeliveredModal);
-
-    $("#dvkDeliveredSave").addEventListener("click", async () => {
-      try {
-        if (!deliveredForId) return;
-
-        const received_by = ($("#dvkRecvName").value || "").trim();
-        const note = ($("#dvkRecvNote").value || "").trim();
-        const signature = sig.getDataUrl();
-
-        const payload = JSON.stringify({ received_by, note, signature });
-
-        await setStatusAndEvent(deliveredForId, "delivered", "delivered", payload);
-        toast("Status gezet: Afgeleverd ✅");
-        closeDeliveredModal();
-        await refresh();
-      } catch (e) {
-        console.error("[DVK][dash] delivered error:", e);
-        showError(e.message || String(e));
-      }
-    });
-
-    // Problem modal
-    $("#dvkProblemCancel").addEventListener("click", closeProblemModal);
-
-    $("#dvkProblemSave").addEventListener("click", async () => {
-      try {
-        if (!problemForId) return;
-        const txt = ($("#dvkProblemText").value || "").trim();
-        if (!txt) throw new Error("Vul een omschrijving in.");
-
-        await setStatusAndEvent(problemForId, "problem", "problem", txt);
-        toast("Probleem gemeld ✅");
-        closeProblemModal();
-        await refresh();
-      } catch (e) {
-        console.error("[DVK][dash] problem error:", e);
-        showError(e.message || String(e)));
-      }
-    });
-
-    await refresh();
   }
 
-  bind();
+  function openCreate() {
+    el.modalTitle.textContent = "Nieuwe zending";
+    el.createBox.style.display = "block";
+    el.actionBox.style.display = "none";
+    el.deliveredBox.style.display = "none";
+    el.problemBox.style.display = "none";
+    hideModalMsg();
+
+    // defaults
+    el.fCustomer.value = "";
+    el.fType.value = "Doos";
+    el.fPickup.value = "";
+    el.fDelivery.value = "";
+    el.fColli.value = "1";
+    el.fKg.value = "1";
+    el.fNote.value = "";
+
+    openModal();
+  }
+
+  function openActions(ship) {
+    state.activeShipment = ship;
+    el.modalTitle.textContent = "Wijzigen / Acties";
+    el.aTrack.textContent = ship.track_code || "-";
+
+    el.createBox.style.display = "none";
+    el.actionBox.style.display = "block";
+    el.deliveredBox.style.display = "none";
+    el.problemBox.style.display = "none";
+    hideModalMsg();
+
+    openModal();
+  }
+
+  function openDelivered(ship) {
+    openActions(ship);
+    el.deliveredBox.style.display = "block";
+    el.problemBox.style.display = "none";
+    el.dReceiver.value = "";
+    el.dNote.value = "";
+
+    clearSignature();
+  }
+
+  function openProblem(ship) {
+    openActions(ship);
+    el.problemBox.style.display = "block";
+    el.deliveredBox.style.display = "none";
+    el.pNote.value = "";
+  }
+
+  async function createShipment() {
+    hideModalMsg();
+
+    const customer_name = el.fCustomer.value.trim();
+    const pickup_address = el.fPickup.value.trim();
+    const delivery_address = el.fDelivery.value.trim();
+    const shipment_type = el.fType.value;
+    const colli_count = Number(el.fColli.value || 0);
+    const weight_kg = Number(el.fKg.value || 0);
+    const note = el.fNote.value.trim();
+
+    if (!customer_name) return showModalMsg("Vul klantnaam in.");
+    if (!pickup_address) return showModalMsg("Vul ophaaladres in.");
+    if (!delivery_address) return showModalMsg("Vul bezorgadres in.");
+    if (!Number.isFinite(colli_count) || colli_count < 1) return showModalMsg("Aantal colli moet minimaal 1 zijn.");
+    if (!Number.isFinite(weight_kg) || weight_kg < 0) return showModalMsg("Kg moet 0 of hoger zijn.");
+
+    el.createBtn.disabled = true;
+
+    const track_code = genTrackCode();
+    const now = new Date().toISOString();
+
+    // 1) insert shipment
+    const { data: ship, error: shipErr } = await sb
+      .from("shipments")
+      .insert([{
+        track_code,
+        customer_name,
+        status: "created",
+        pickup_address,
+        delivery_address,
+        shipment_type,
+        colli_count,
+        weight_kg,
+        driver_id: state.user.id,
+        updated_at: now,
+      }])
+      .select("id, track_code, customer_name, status, colli_count, weight_kg, updated_at, pickup_address, delivery_address, shipment_type, driver_id")
+      .single();
+
+    if (shipErr) {
+      el.createBtn.disabled = false;
+      showModalMsg("Aanmaken mislukt: " + shipErr.message);
+      return;
+    }
+
+    // 2) initial event (optioneel)
+    await sb.from("shipment_events").insert([{
+      shipment_id: ship.id,
+      event_type: "created",
+      note: note || null,
+      created_at: now,
+    }]);
+
+    el.createBtn.disabled = false;
+    closeModal();
+    await fetchMyShipments();
+  }
+
+  async function quickStatus(ship, newStatus) {
+    try {
+      hideMsg();
+      const now = new Date().toISOString();
+
+      // update shipment status
+      const { error: upErr } = await sb
+        .from("shipments")
+        .update({ status: newStatus, updated_at: now })
+        .eq("id", ship.id);
+
+      if (upErr) throw upErr;
+
+      // log event
+      const { error: evErr } = await sb
+        .from("shipment_events")
+        .insert([{
+          shipment_id: ship.id,
+          event_type: newStatus,
+          created_at: now,
+        }]);
+
+      if (evErr) throw evErr;
+
+      await fetchMyShipments();
+    } catch (e) {
+      showMsg("Status wijzigen mislukt: " + (e.message || String(e)));
+    }
+  }
+
+  async function confirmDelivered() {
+    if (!state.activeShipment) return;
+
+    const receiver = el.dReceiver.value.trim();
+    const note = el.dNote.value.trim();
+    const signature = getSignatureDataUrl();
+
+    if (!receiver) return showModalMsg("Vul 'Ontvangen door' in.");
+    if (!signature) return showModalMsg("Zet een handtekening.");
+
+    const ship = state.activeShipment;
+    const now = new Date().toISOString();
+
+    // update shipment
+    const { error: upErr } = await sb
+      .from("shipments")
+      .update({ status: "delivered", updated_at: now })
+      .eq("id", ship.id);
+
+    if (upErr) return showModalMsg("Update mislukt: " + upErr.message);
+
+    // event
+    const { error: evErr } = await sb
+      .from("shipment_events")
+      .insert([{
+        shipment_id: ship.id,
+        event_type: "delivered",
+        receiver_name: receiver,
+        note: note || null,
+        signature_dataurl: signature,
+        created_at: now,
+      }]);
+
+    if (evErr) return showModalMsg("Event opslaan mislukt: " + evErr.message);
+
+    closeModal();
+    await fetchMyShipments();
+  }
+
+  async function confirmProblem() {
+    if (!state.activeShipment) return;
+    const note = el.pNote.value.trim();
+    if (!note) return showModalMsg("Vul een probleemomschrijving in.");
+
+    const ship = state.activeShipment;
+    const now = new Date().toISOString();
+
+    const { error: upErr } = await sb
+      .from("shipments")
+      .update({ status: "problem", updated_at: now })
+      .eq("id", ship.id);
+
+    if (upErr) return showModalMsg("Update mislukt: " + upErr.message);
+
+    const { error: evErr } = await sb
+      .from("shipment_events")
+      .insert([{
+        shipment_id: ship.id,
+        event_type: "problem",
+        note,
+        created_at: now,
+      }]);
+
+    if (evErr) return showModalMsg("Event opslaan mislukt: " + evErr.message);
+
+    closeModal();
+    await fetchMyShipments();
+  }
+
+  // --- Signature canvas ---
+  function setupSignature() {
+    const c = el.sigCanvas;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#111";
+
+    const getPos = (ev) => {
+      const r = c.getBoundingClientRect();
+      const x = (ev.clientX - r.left) * (c.width / r.width);
+      const y = (ev.clientY - r.top) * (c.height / r.height);
+      return { x, y };
+    };
+
+    const down = (ev) => {
+      state.sig.drawing = true;
+      const p = getPos(ev);
+      state.sig.lastX = p.x; state.sig.lastY = p.y;
+    };
+
+    const move = (ev) => {
+      if (!state.sig.drawing) return;
+      const p = getPos(ev);
+      ctx.beginPath();
+      ctx.moveTo(state.sig.lastX, state.sig.lastY);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      state.sig.lastX = p.x; state.sig.lastY = p.y;
+    };
+
+    const up = () => { state.sig.drawing = false; };
+
+    c.addEventListener("mousedown", down);
+    c.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+
+    // touch
+    c.addEventListener("touchstart", (e) => { e.preventDefault(); down(e.touches[0]); }, { passive:false });
+    c.addEventListener("touchmove", (e) => { e.preventDefault(); move(e.touches[0]); }, { passive:false });
+    window.addEventListener("touchend", up);
+  }
+
+  function clearSignature() {
+    const c = el.sigCanvas;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+
+  function getSignatureDataUrl() {
+    const c = el.sigCanvas;
+    if (!c) return null;
+
+    // check if empty
+    const ctx = c.getContext("2d");
+    const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
+    let hasInk = false;
+    for (let i = 0; i < pixels.length; i += 4) {
+      // if not white-ish
+      if (!(pixels[i] > 245 && pixels[i+1] > 245 && pixels[i+2] > 245 && pixels[i+3] > 0)) {
+        hasInk = true; break;
+      }
+    }
+    if (!hasInk) return null;
+
+    return c.toDataURL("image/png");
+  }
+
+  async function logout() {
+    await sb.auth.signOut();
+    location.href = "./login.html";
+  }
+
+  // --- init ---
+  async function init() {
+    try {
+      await requireAuth();
+
+      el.loading.style.display = "block";
+      el.loading.textContent = "Laden…";
+
+      await fetchMyShipments();
+
+      // realtime refresh (optioneel)
+      sb.channel("dvk_shipments_driver")
+        .on("postgres_changes",
+          { event: "*", schema: "public", table: "shipments" },
+          async () => { await fetchMyShipments(); }
+        )
+        .subscribe();
+
+      setupSignature();
+    } catch (e) {
+      log("init error", e);
+      // requireAuth redirect doet al z’n werk, dus hier vaak niets nodig
+    }
+  }
+
+  // UI binds
+  el.newBtn.addEventListener("click", openCreate);
+  el.logoutBtn.addEventListener("click", logout);
+  el.closeModalBtn.addEventListener("click", closeModal);
+  el.createBtn.addEventListener("click", createShipment);
+
+  el.btnPickup.addEventListener("click", () => state.activeShipment && quickStatus(state.activeShipment, "pickup"));
+  el.btnTransit.addEventListener("click", () => state.activeShipment && quickStatus(state.activeShipment, "in_transit"));
+  el.btnDelivered.addEventListener("click", () => { el.deliveredBox.style.display = "block"; el.problemBox.style.display = "none"; clearSignature(); });
+  el.btnProblem.addEventListener("click", () => { el.problemBox.style.display = "block"; el.deliveredBox.style.display = "none"; });
+
+  el.clearSigBtn.addEventListener("click", clearSignature);
+  el.confirmDeliveredBtn.addEventListener("click", confirmDelivered);
+  el.confirmProblemBtn.addEventListener("click", confirmProblem);
+
+  init();
 })();
