@@ -9,128 +9,166 @@
 
 <body>
   <main class="container">
-    <header class="header">
-      <div>
-        <h1>De Vechtse Koeriers</h1>
-        <div class="muted">Chauffeur Dashboard</div>
-        <div id="userEmail" class="muted"></div>
-      </div>
-      <div class="header-actions">
-        <button id="btnLogout" class="btn btn-ghost">Uitloggen</button>
-      </div>
-    </header>
+    <div class="card">
+      <h1>De Vechtse Koeriers</h1>
+      <div class="muted">Chauffeur Dashboard</div>
 
-    <section class="card">
-      <div class="row row-between">
-        <h2>Mijn zendingen</h2>
-        <button id="btnNew" class="btn btn-primary">+ Nieuwe zending</button>
+      <div id="dvkToast" class="msg ok" style="display:none; margin-top:12px;"></div>
+
+      <div class="row" style="justify-content:space-between; margin-top:12px;">
+        <div>
+          <div class="muted">Ingelogd als</div>
+          <div id="userEmail" style="font-weight:700;">-</div>
+        </div>
+        <button id="logoutBtn" class="btn ghost">Uitloggen</button>
       </div>
 
-      <div id="msg" class="msg" style="display:none;"></div>
+      <div class="row" style="justify-content:space-between; align-items:center; margin-top:18px;">
+        <h2 style="margin:0;">Mijn zendingen</h2>
+        <button id="newShipmentBtn" class="btn">+ Nieuwe zending</button>
+      </div>
 
-      <div class="table-wrap">
+      <div id="shipmentsError" class="msg bad" style="display:none; margin-top:10px;"></div>
+
+      <div style="margin-top:12px; overflow:auto;">
         <table class="table">
           <thead>
             <tr>
               <th>Trackcode</th>
               <th>Klant</th>
               <th>Status</th>
-              <th>Ophaaladres</th>
-              <th>Bezorgadres</th>
-              <th>Type</th>
               <th>Colli</th>
               <th>Kg</th>
               <th>Laatst bijgewerkt</th>
-              <th></th>
+              <th>Acties</th>
             </tr>
           </thead>
-          <tbody id="shipmentsBody"></tbody>
+          <tbody id="shipmentsTbody">
+            <tr><td colspan="7" class="muted">Laden…</td></tr>
+          </tbody>
         </table>
-      </div>
-    </section>
-
-    <!-- Modal -->
-    <div id="modal" class="modal" style="display:none;">
-      <div class="modal-card">
-        <div class="row row-between">
-          <h3 id="modalTitle">Nieuwe zending</h3>
-          <button id="btnClose" class="btn btn-ghost">Sluiten</button>
-        </div>
-
-        <form id="shipmentForm" class="form">
-          <input type="hidden" id="shipmentId" />
-
-          <div class="grid">
-            <div class="field">
-              <label>Trackcode</label>
-              <input id="trackCode" placeholder="DVK-2026-0001" required />
-            </div>
-
-            <div class="field">
-              <label>Klantnaam</label>
-              <input id="customerName" placeholder="Naam klant" required />
-            </div>
-
-            <div class="field">
-              <label>Status</label>
-              <select id="status">
-                <option value="created">created</option>
-                <option value="pickup">pickup</option>
-                <option value="in_transit">in_transit</option>
-                <option value="delivered">delivered</option>
-                <option value="problem">problem</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label>Type zending</label>
-              <select id="shipmentType">
-                <option value="">(kies)</option>
-                <option value="Doos">Doos</option>
-                <option value="Brief">Brief</option>
-                <option value="Pallet">Pallet</option>
-                <option value="Koel/vers">Koel/vers</option>
-                <option value="Overig">Overig</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label>Ophaaladres</label>
-              <input id="pickupAddress" placeholder="Straat, nr, postcode, plaats" />
-            </div>
-
-            <div class="field">
-              <label>Bezorgadres</label>
-              <input id="deliveryAddress" placeholder="Straat, nr, postcode, plaats" />
-            </div>
-
-            <div class="field">
-              <label>Aantal colli</label>
-              <input id="colliCount" type="number" min="0" step="1" placeholder="0" />
-            </div>
-
-            <div class="field">
-              <label>Gewicht (kg)</label>
-              <input id="weightKg" type="number" min="0" step="0.1" placeholder="0.0" />
-            </div>
-          </div>
-
-          <div class="row row-between" style="margin-top:14px;">
-            <button id="btnDelete" type="button" class="btn btn-danger" style="display:none;">Verwijderen</button>
-            <div class="row">
-              <button type="button" id="btnCancel" class="btn btn-ghost">Annuleren</button>
-              <button type="submit" id="btnSave" class="btn btn-primary">Opslaan</button>
-            </div>
-          </div>
-        </form>
       </div>
     </div>
   </main>
 
+  <!-- ====== MODAL: NEW/EDIT SHIPMENT ====== -->
+  <div id="dvkShipModal" class="modal" style="display:none;">
+    <div class="modal-card">
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div style="font-weight:800; font-size:18px;" id="shipModalTitle">Nieuwe zending</div>
+        <button id="shipModalClose" class="btn ghost">Sluiten</button>
+      </div>
+
+      <div class="grid" style="margin-top:12px;">
+        <div>
+          <label>Trackcode</label>
+          <input id="mTrack" class="input" placeholder="DVK-2026-0001" />
+        </div>
+        <div>
+          <label>Klantnaam</label>
+          <input id="mCustomer" class="input" placeholder="Piet Pieters" />
+        </div>
+        <div>
+          <label>Ophaaladres</label>
+          <input id="mPickup" class="input" placeholder="Straat 1, Plaats" />
+        </div>
+        <div>
+          <label>Bezorgadres</label>
+          <input id="mDropoff" class="input" placeholder="Straat 2, Plaats" />
+        </div>
+        <div>
+          <label>Type zending</label>
+          <select id="mType" class="input">
+            <option value="Doos">Doos</option>
+            <option value="Brief">Brief</option>
+            <option value="Pallet">Pallet</option>
+            <option value="Overig">Overig</option>
+          </select>
+        </div>
+        <div>
+          <label>Colli</label>
+          <input id="mColli" class="input" type="number" min="0" step="1" value="1" />
+        </div>
+        <div>
+          <label>Kg</label>
+          <input id="mKg" class="input" type="number" min="0" step="0.1" value="0" />
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="mStatus" class="input">
+            <option value="created">Aangemeld</option>
+            <option value="pickup">Opgehaald</option>
+            <option value="in_transit">Onderweg</option>
+            <option value="delivered">Afgeleverd</option>
+            <option value="problem">Probleem</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:flex-end; gap:10px; margin-top:14px;">
+        <button id="shipModalDelete" class="btn danger" style="display:none;">Verwijderen</button>
+        <button id="shipModalSave" class="btn">Opslaan</button>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Tip: “Afgeleverd” + ontvanger/handtekening doe je via de snelle knoppen.
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== MODAL: DELIVERED ====== -->
+  <div id="dvkDeliveredModal" class="modal" style="display:none;">
+    <div class="modal-card">
+      <div style="font-weight:800; font-size:18px;">Afgeleverd</div>
+      <div class="muted">Vul ontvanger in en (optioneel) handtekening.</div>
+
+      <div style="margin-top:12px;">
+        <label>Ontvangen door</label>
+        <input id="dvkRecvName" class="input" placeholder="Naam receptie / buur / klant" />
+      </div>
+
+      <div style="margin-top:12px;">
+        <label>Opmerking</label>
+        <input id="dvkRecvNote" class="input" placeholder="Bijv. receptie, buren, achterdeur..." />
+      </div>
+
+      <div style="margin-top:12px;">
+        <label>Handtekening (optioneel)</label>
+        <canvas id="dvkSigCanvas" width="520" height="160" style="width:100%; border:1px solid rgba(255,255,255,.12); border-radius:10px;"></canvas>
+        <div class="row" style="justify-content:flex-end; margin-top:8px;">
+          <button id="dvkSigClear" class="btn ghost">Wissen</button>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:flex-end; gap:10px; margin-top:14px;">
+        <button id="dvkDeliveredCancel" class="btn ghost">Annuleren</button>
+        <button id="dvkDeliveredSave" class="btn">Opslaan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== MODAL: PROBLEM ====== -->
+  <div id="dvkProblemModal" class="modal" style="display:none;">
+    <div class="modal-card">
+      <div style="font-weight:800; font-size:18px;">Probleem melden</div>
+      <div class="muted">Bijv. niet thuis, adres onjuist, zending beschadigd…</div>
+
+      <div style="margin-top:12px;">
+        <label>Omschrijving</label>
+        <input id="dvkProblemText" class="input" placeholder="Bijv. klant niet thuis, nieuwe afspraak nodig" />
+      </div>
+
+      <div class="row" style="justify-content:flex-end; gap:10px; margin-top:14px;">
+        <button id="dvkProblemCancel" class="btn ghost">Annuleren</button>
+        <button id="dvkProblemSave" class="btn">Opslaan</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-  <!-- Config + dashboard logic -->
+  <!-- Config + dashboard -->
   <script src="../public/js/supabase-config.js?v=1"></script>
   <script src="../public/js/dashboard.js?v=1"></script>
 </body>
