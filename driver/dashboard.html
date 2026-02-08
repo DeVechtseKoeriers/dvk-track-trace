@@ -4,140 +4,136 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chauffeur Dashboard | DVK</title>
-  <link rel="stylesheet" href="../public/css/style.css?v=1" />
-  <style>
-    .modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:14px; z-index:9999;}
-    .modal{width:min(980px, 100%); background:#0f1a2c; border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:16px;}
-    .modal-header{display:flex; justify-content:space-between; align-items:center; gap:10px;}
-    .modal-title{font-size:18px; font-weight:800;}
-    .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
-    .btnrow{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
-    .btn.big{padding:12px 14px; border-radius:12px; font-weight:800;}
-    .btn.green{background:#22c55e;}
-    .btn.blue{background:#3b82f6;}
-    .btn.orange{background:#f59e0b; color:#111;}
-    .btn.gray{background:rgba(255,255,255,.12);}
-    .btn.danger{background:#ef4444;}
-    .activeGlow{outline:2px solid rgba(34,197,94,.9); box-shadow:0 0 0 3px rgba(34,197,94,.22);}
-    .sigpad{background:#0b1220; border:1px solid rgba(255,255,255,.12); border-radius:12px; width:100%; height:220px; display:block;}
-    .small{font-size:12px; opacity:.8;}
-    table{width:100%; border-collapse:collapse;}
-    th,td{padding:10px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; vertical-align:top;}
-    th{font-size:12px; opacity:.75;}
-  </style>
+  <link rel="stylesheet" href="../public/css/style.css" />
 </head>
-
 <body>
   <main class="container">
-    <h1>De Vechtse Koeriers</h1>
-    <div class="muted">Chauffeur Dashboard</div>
-
-    <div id="whoami" class="muted" style="margin-top:8px;">Ingelogd als: -</div>
-
-    <div style="display:flex; gap:10px; margin-top:12px;">
-      <button id="logoutBtn" class="btn">Uitloggen</button>
-      <button id="newShipmentBtn" class="btn">+ Nieuwe zending</button>
-    </div>
-
-    <section style="margin-top:18px;">
-      <h2>Mijn zendingen</h2>
-      <div id="msg" class="msg" style="display:none;margin-top:10px;"></div>
-
-      <div style="overflow:auto; margin-top:10px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Trackcode</th>
-              <th>Klant</th>
-              <th>Status</th>
-              <th>Colli</th>
-              <th>Kg</th>
-              <th>Laatst bijgewerkt</th>
-              <th>Acties</th>
-            </tr>
-          </thead>
-          <tbody id="shipmentsTbody">
-            <tr><td colspan="7" class="muted">Laden...</td></tr>
-          </tbody>
-        </table>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+        <div>
+          <div class="h1">De Vechtse Koeriers</div>
+          <div class="muted">Chauffeur Dashboard</div>
+          <div class="muted" id="userEmail">Ingelogd als: -</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+          <button class="btn" id="logoutBtn">Uitloggen</button>
+          <button class="btn" id="newShipmentBtn">+ Nieuwe zending</button>
+          <button class="btn" id="toggleArchiveBtn">Archief</button>
+        </div>
       </div>
-    </section>
+
+      <div style="margin-top:14px;">
+        <div class="h2" id="listTitle">Mijn zendingen</div>
+        <div id="statusMsg" class="msg" style="display:none;margin-top:10px;"></div>
+
+        <div style="overflow:auto;margin-top:10px;">
+          <table class="table" style="min-width:900px;">
+            <thead>
+              <tr>
+                <th>Trackcode</th>
+                <th>Klant</th>
+                <th>Status</th>
+                <th>Colli</th>
+                <th>Kg</th>
+                <th>Laatst bijgewerkt</th>
+                <th>Acties</th>
+              </tr>
+            </thead>
+            <tbody id="shipmentsTbody">
+              <tr><td colspan="7" class="muted">Laden...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </main>
 
   <!-- Modal -->
-  <div id="modalBackdrop" class="modal-backdrop">
-    <div class="modal">
-      <div class="modal-header">
-        <div class="modal-title">Wijzigen / Acties</div>
-        <button id="closeModalBtn" class="btn gray">Sluiten</button>
+  <div class="modal" id="modal" style="display:none;">
+    <div class="modal-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div class="h2">Wijzigen / Acties</div>
+        <button class="btn" id="closeModalBtn">Sluiten</button>
       </div>
 
-      <div id="modalError" class="msg" style="display:none; margin-top:10px;"></div>
+      <div id="modalMsg" class="msg" style="display:none;margin-top:10px;"></div>
 
       <div style="margin-top:10px;">
-        <div class="muted small">Trackcode:</div>
-        <div id="modalTrack" style="font-weight:800;"></div>
+        <div class="muted">Trackcode:</div>
+        <div style="font-weight:700;" id="modalTrackcode">-</div>
       </div>
 
-      <div class="btnrow">
-        <button id="btnPickup" class="btn big gray">Opgehaald</button>
-        <button id="btnTransit" class="btn big gray">Onderweg</button>
-        <button id="btnDelivered" class="btn big gray">Afgeleverd</button>
-        <button id="btnProblem" class="btn big gray">Probleem</button>
+      <!-- Status knoppen -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;">
+        <button class="btn" id="btnPickedUp">Opgehaald</button>
+        <button class="btn" id="btnInTransit">Onderweg</button>
+        <button class="btn" id="btnDelivered">Afgeleverd</button>
+        <button class="btn" id="btnProblem">Probleem</button>
       </div>
 
-      <div class="row2" style="margin-top:12px;">
-        <div>
-          <label class="muted small">Ontvangen door (naam)</label>
-          <input id="receiverName" class="input" placeholder="Naam ontvanger" />
-        </div>
-        <div>
-          <label class="muted small">Notitie</label>
-          <input id="note" class="input" placeholder="Bijv. receptie / buren / geen gehoor..." />
-        </div>
-      </div>
-
-      <div style="margin-top:12px;">
-        <label class="muted small">Handtekening</label>
-        <canvas id="sigCanvas" class="sigpad"></canvas>
-        <div style="display:flex; gap:10px; margin-top:10px;">
-          <button id="clearSigBtn" class="btn gray">Wis handtekening</button>
-        </div>
-      </div>
-
-      <div class="row2" style="margin-top:12px;">
-        <div>
-          <label class="muted small">Afleverdocument / Foto 1 (max 1 bestand)</label>
-          <input id="file1" type="file" class="input" accept="image/*,application/pdf" />
-          <div style="display:flex; gap:10px; margin-top:10px;">
-            <button id="deleteFile1Btn" class="btn danger">Verwijderen 1</button>
+      <!-- Afgeleverd velden -->
+      <div id="deliveredFields" style="margin-top:14px;display:none;">
+        <div class="row" style="gap:10px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:240px;">
+            <div class="muted">Ontvangen door (naam)</div>
+            <input class="input" id="receiverNameInput" placeholder="Naam ontvanger" />
           </div>
-          <div id="file1Info" class="muted small" style="margin-top:6px;"></div>
-        </div>
-
-        <div>
-          <label class="muted small">Afleverdocument / Foto 2 (max 1 bestand)</label>
-          <input id="file2" type="file" class="input" accept="image/*,application/pdf" />
-          <div style="display:flex; gap:10px; margin-top:10px;">
-            <button id="deleteFile2Btn" class="btn danger">Verwijderen 2</button>
+          <div style="flex:1;min-width:240px;">
+            <div class="muted">Notitie</div>
+            <input class="input" id="noteInput" placeholder="Bijv. afgeleverd receptie" />
           </div>
-          <div id="file2Info" class="muted small" style="margin-top:6px;"></div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <div class="muted">Handtekening</div>
+          <canvas id="sigCanvas" width="900" height="260" style="width:100%;background:#fff;border-radius:12px;"></canvas>
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:8px;">
+            <button class="btn" id="clearSigBtn">Wis handtekening</button>
+          </div>
+        </div>
+
+        <!-- 2 uploads + delete -->
+        <div style="margin-top:14px;">
+          <div class="muted">Afleverdocument / foto (max 2)</div>
+
+          <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-top:8px;">
+            <input type="file" id="file1" class="input" />
+            <button class="btn" id="deleteFile1Btn">Verwijder</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-top:8px;">
+            <input type="file" id="file2" class="input" />
+            <button class="btn" id="deleteFile2Btn">Verwijder</button>
+          </div>
+
+          <div class="muted" id="uploadInfo" style="margin-top:8px;">Nog geen bestanden.</div>
+        </div>
+
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap;">
+          <button class="btn" id="pdfBtn">PDF maken</button>
+          <button class="btn" id="archiveBtn">Archiveren</button>
+          <button class="btn" id="confirmDeliveredBtn">Bevestig aflevering</button>
         </div>
       </div>
 
-      <div class="btnrow" style="margin-top:14px; justify-content:flex-end;">
-        <button id="pdfBtn" class="btn blue">PDF</button>
-        <button id="archiveBtn" class="btn orange">Archiveren</button>
-        <button id="saveEventBtn" class="btn green">Opslaan</button>
+      <!-- Timeline preview -->
+      <div style="margin-top:14px;">
+        <div style="font-weight:700;">Timeline</div>
+        <div id="timelineBox" class="timeline" style="margin-top:8px;"></div>
       </div>
+
+      <!-- PDF container (wordt gevuld in JS) -->
+      <div id="pdfContainer" style="display:none;"></div>
     </div>
   </div>
 
-  <!-- Libraries -->
+  <!-- Supabase CDN -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
-  <!-- App -->
+  <!-- PDF lib -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <!-- Config + logic -->
   <script src="../public/js/supabase-config.js?v=1"></script>
   <script src="../public/js/dashboard.js?v=1"></script>
 </body>
