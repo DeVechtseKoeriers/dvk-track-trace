@@ -5,69 +5,45 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chauffeur Dashboard | DVK</title>
   <link rel="stylesheet" href="../public/css/style.css?v=1" />
-
   <style>
-    .seg { display:inline-flex; border:1px solid rgba(255,255,255,.10); border-radius:12px; overflow:hidden; }
-    .seg button { padding:10px 12px; background:rgba(255,255,255,.04); border:0; color:#fff; cursor:pointer; }
-    .seg button.active { background:rgba(34,197,94,.18); }
-
-    .status-btn.active-green{
-      border-color: rgba(34,197,94,.55) !important;
-      background: rgba(34,197,94,.18) !important;
-      box-shadow: 0 0 0 3px rgba(34,197,94,.12);
-    }
-
-    .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:16px; z-index:999; }
-    .modal{ width:min(940px, 96vw); background:#0f1a2c; border:1px solid rgba(255,255,255,.10); border-radius:16px; padding:16px; max-height:92vh; overflow:auto; }
-    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .space{ justify-content:space-between; }
-    .inp{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); color:#fff; }
-    .lbl{ display:block; margin:0 0 6px 0; opacity:.75; font-size:13px; }
-    .btn{ padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.04); color:#fff; cursor:pointer; }
-    .btn.primary{ background:#3b82f6; border-color:#3b82f6; }
-    .btn.warn{ background:rgba(245,158,11,.18); border-color:rgba(245,158,11,.35); }
-    .btn.ok{ background:rgba(34,197,94,.18); border-color:rgba(34,197,94,.35); }
-    .btn.small{ padding:8px 10px; border-radius:10px; font-size:13px; }
-
-    .table-wrap{ overflow:auto; margin-top:12px; }
-    table{ width:100%; border-collapse:collapse; }
-    th,td{ padding:10px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; }
-    th{ opacity:.7; }
-
-    canvas{ width:100%; height:220px; background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,.15); }
-    .msg{ display:none; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.10); margin-top:10px;}
-    .msg.bad{ background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.35); }
-    .msg.ok{ background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.35); }
-    .muted{ opacity:.7; }
-
-    .filelist { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
-    .chip { display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(255,255,255,.10); border-radius:999px; background:rgba(255,255,255,.03); }
+    .modal-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:14px; z-index:9999;}
+    .modal{width:min(980px, 100%); background:#0f1a2c; border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:16px;}
+    .modal-header{display:flex; justify-content:space-between; align-items:center; gap:10px;}
+    .modal-title{font-size:18px; font-weight:800;}
+    .row2{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+    .btnrow{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;}
+    .btn.big{padding:12px 14px; border-radius:12px; font-weight:800;}
+    .btn.green{background:#22c55e;}
+    .btn.blue{background:#3b82f6;}
+    .btn.orange{background:#f59e0b; color:#111;}
+    .btn.gray{background:rgba(255,255,255,.12);}
+    .btn.danger{background:#ef4444;}
+    .activeGlow{outline:2px solid rgba(34,197,94,.9); box-shadow:0 0 0 3px rgba(34,197,94,.22);}
+    .sigpad{background:#0b1220; border:1px solid rgba(255,255,255,.12); border-radius:12px; width:100%; height:220px; display:block;}
+    .small{font-size:12px; opacity:.8;}
+    table{width:100%; border-collapse:collapse;}
+    th,td{padding:10px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; vertical-align:top;}
+    th{font-size:12px; opacity:.75;}
   </style>
 </head>
 
 <body>
-  <main style="max-width:1100px;margin:20px auto;padding:0 14px;">
-    <div style="border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;background:rgba(255,255,255,.02);">
-      <div class="row space">
-        <div>
-          <div style="font-size:22px;font-weight:800;">De Vechtse Koeriers</div>
-          <div class="muted">Chauffeur Dashboard</div>
-          <div class="muted" style="margin-top:6px;">Ingelogd als <b id="userEmail">-</b></div>
-        </div>
+  <main class="container">
+    <h1>De Vechtse Koeriers</h1>
+    <div class="muted">Chauffeur Dashboard</div>
 
-        <div class="row">
-          <div class="seg" title="Open / Archief">
-            <button id="tabOpen" class="active" type="button">Open</button>
-            <button id="tabArchive" type="button">Archief</button>
-          </div>
-          <button id="newBtn" class="btn primary" type="button">+ Nieuwe zending</button>
-          <button id="logoutBtn" class="btn" type="button">Uitloggen</button>
-        </div>
-      </div>
+    <div id="whoami" class="muted" style="margin-top:8px;">Ingelogd als: -</div>
 
-      <div id="pageMsg" class="msg bad"></div>
+    <div style="display:flex; gap:10px; margin-top:12px;">
+      <button id="logoutBtn" class="btn">Uitloggen</button>
+      <button id="newShipmentBtn" class="btn">+ Nieuwe zending</button>
+    </div>
 
-      <div class="table-wrap">
+    <section style="margin-top:18px;">
+      <h2>Mijn zendingen</h2>
+      <div id="msg" class="msg" style="display:none;margin-top:10px;"></div>
+
+      <div style="overflow:auto; margin-top:10px;">
         <table>
           <thead>
             <tr>
@@ -76,89 +52,92 @@
               <th>Status</th>
               <th>Colli</th>
               <th>Kg</th>
-              <th>Bijgewerkt</th>
+              <th>Laatst bijgewerkt</th>
               <th>Acties</th>
             </tr>
           </thead>
-          <tbody id="tbody">
-            <tr><td colspan="7" class="muted">Laden…</td></tr>
+          <tbody id="shipmentsTbody">
+            <tr><td colspan="7" class="muted">Laden...</td></tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
   </main>
 
-  <!-- Modal: Wijzigen / status -->
+  <!-- Modal -->
   <div id="modalBackdrop" class="modal-backdrop">
     <div class="modal">
-      <div class="row space">
-        <div style="font-weight:800;font-size:18px;">Wijzigen</div>
-        <div class="row">
-          <button id="pdfBtn" class="btn ok" type="button">PDF (Afleverbon / POD)</button>
-          <button id="closeModalBtn" class="btn" type="button">Sluiten</button>
+      <div class="modal-header">
+        <div class="modal-title">Wijzigen / Acties</div>
+        <button id="closeModalBtn" class="btn gray">Sluiten</button>
+      </div>
+
+      <div id="modalError" class="msg" style="display:none; margin-top:10px;"></div>
+
+      <div style="margin-top:10px;">
+        <div class="muted small">Trackcode:</div>
+        <div id="modalTrack" style="font-weight:800;"></div>
+      </div>
+
+      <div class="btnrow">
+        <button id="btnPickup" class="btn big gray">Opgehaald</button>
+        <button id="btnTransit" class="btn big gray">Onderweg</button>
+        <button id="btnDelivered" class="btn big gray">Afgeleverd</button>
+        <button id="btnProblem" class="btn big gray">Probleem</button>
+      </div>
+
+      <div class="row2" style="margin-top:12px;">
+        <div>
+          <label class="muted small">Ontvangen door (naam)</label>
+          <input id="receiverName" class="input" placeholder="Naam ontvanger" />
+        </div>
+        <div>
+          <label class="muted small">Notitie</label>
+          <input id="note" class="input" placeholder="Bijv. receptie / buren / geen gehoor..." />
         </div>
       </div>
 
-      <div class="muted" style="margin-top:8px;">Trackcode: <b id="mTrack">-</b></div>
-      <div class="muted" style="margin-top:4px;">Huidige status: <b id="mStatus">-</b></div>
-
-      <div id="modalMsg" class="msg bad"></div>
-      <div id="modalOk" class="msg ok"></div>
-
-      <div class="row" style="margin-top:14px;">
-        <button id="btnPickup" class="btn status-btn" type="button">Opgehaald</button>
-        <button id="btnTransit" class="btn status-btn" type="button">Onderweg</button>
-        <button id="btnDelivered" class="btn status-btn" type="button">Afgeleverd</button>
-        <button id="btnProblem" class="btn status-btn warn" type="button">Probleem</button>
-      </div>
-
-      <div class="row" style="margin-top:14px; align-items:flex-start;">
-        <div style="flex:1; min-width:240px;">
-          <label class="lbl">Ontvangen door (alleen bij Afgeleverd)</label>
-          <input id="receiverName" class="inp" placeholder="Naam / receptie" />
-        </div>
-        <div style="flex:1; min-width:240px;">
-          <label class="lbl">Notitie (optioneel)</label>
-          <input id="note" class="inp" placeholder="Bijv. afgeleverd receptie / niemand thuis" />
+      <div style="margin-top:12px;">
+        <label class="muted small">Handtekening</label>
+        <canvas id="sigCanvas" class="sigpad"></canvas>
+        <div style="display:flex; gap:10px; margin-top:10px;">
+          <button id="clearSigBtn" class="btn gray">Wis handtekening</button>
         </div>
       </div>
 
-      <div style="margin-top:14px;">
-        <label class="lbl">Handtekening (alleen bij Afgeleverd)</label>
-        <canvas id="sig" width="900" height="440"></canvas>
-        <div class="row" style="justify-content:flex-end; margin-top:10px;">
-          <button id="clearSigBtn" class="btn" type="button">Wis</button>
-          <button id="saveBtn" class="btn primary" type="button">Opslaan</button>
+      <div class="row2" style="margin-top:12px;">
+        <div>
+          <label class="muted small">Afleverdocument / Foto 1 (max 1 bestand)</label>
+          <input id="file1" type="file" class="input" accept="image/*,application/pdf" />
+          <div style="display:flex; gap:10px; margin-top:10px;">
+            <button id="deleteFile1Btn" class="btn danger">Verwijderen 1</button>
+          </div>
+          <div id="file1Info" class="muted small" style="margin-top:6px;"></div>
+        </div>
+
+        <div>
+          <label class="muted small">Afleverdocument / Foto 2 (max 1 bestand)</label>
+          <input id="file2" type="file" class="input" accept="image/*,application/pdf" />
+          <div style="display:flex; gap:10px; margin-top:10px;">
+            <button id="deleteFile2Btn" class="btn danger">Verwijderen 2</button>
+          </div>
+          <div id="file2Info" class="muted small" style="margin-top:6px;"></div>
         </div>
       </div>
 
-      <div style="margin-top:14px;">
-        <label class="lbl">Afleverdocument / Foto (max 2)</label>
-        <input id="proofFiles" class="inp" type="file" multiple accept="image/*,application/pdf" />
-        <div class="muted" style="margin-top:6px;">Tip: kies max 2 bestanden. (jpg/png/pdf)</div>
-        <div id="proofList" class="filelist"></div>
-      </div>
-
-      <div class="row space" style="margin-top:14px;">
-        <label class="muted" style="display:flex;gap:10px;align-items:center;">
-          <input id="isClosed" type="checkbox" />
-          Naar archief (afgehandeld)
-        </label>
-
-        <label class="muted" style="display:flex;gap:10px;align-items:center;">
-          <input id="autoPod" type="checkbox" checked />
-          Bij archiveren POD PDF opslaan
-        </label>
+      <div class="btnrow" style="margin-top:14px; justify-content:flex-end;">
+        <button id="pdfBtn" class="btn blue">PDF</button>
+        <button id="archiveBtn" class="btn orange">Archiveren</button>
+        <button id="saveEventBtn" class="btn green">Opslaan</button>
       </div>
     </div>
   </div>
 
-  <!-- Supabase -->
+  <!-- Libraries -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-  <!-- jsPDF (PDF maken) -->
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
+  <!-- App -->
   <script src="../public/js/supabase-config.js?v=1"></script>
   <script src="../public/js/dashboard.js?v=1"></script>
 </body>
