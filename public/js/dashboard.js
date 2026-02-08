@@ -1,748 +1,698 @@
-(() => {
-  const sb = window.supabaseClient;
+// public/js/dashboard.js
+// Chauffeur dashboard: lijst, modal, statusknoppen, handtekening, 2 uploads + verwijderen, pdf, archiveren
+
+(function () {
   const $ = (id) => document.getElementById(id);
 
-  const el = {
-    userEmail: $("userEmail"),
-    logoutBtn: $("logoutBtn"),
-    newBtn: $("newBtn"),
-    tbody: $("tbody"),
-    pageMsg: $("pageMsg"),
+  const tbody = $("shipmentsTbody");
+  const msg = $("msg");
+  const whoami = $("whoami");
 
-    tabOpen: $("tabOpen"),
-    tabArchive: $("tabArchive"),
+  const modalBackdrop = $("modalBackdrop");
+  const closeModalBtn = $("closeModalBtn");
+  const modalError = $("modalError");
+  const modalTrack = $("modalTrack");
 
-    modalBackdrop: $("modalBackdrop"),
-    closeModalBtn: $("closeModalBtn"),
-    modalMsg: $("modalMsg"),
-    modalOk: $("modalOk"),
-    mTrack: $("mTrack"),
-    mStatus: $("mStatus"),
+  const btnPickup = $("btnPickup");
+  const btnTransit = $("btnTransit");
+  const btnDelivered = $("btnDelivered");
+  const btnProblem = $("btnProblem");
 
-    btnPickup: $("btnPickup"),
-    btnTransit: $("btnTransit"),
-    btnDelivered: $("btnDelivered"),
-    btnProblem: $("btnProblem"),
+  const receiverName = $("receiverName");
+  const note = $("note");
+  const sigCanvas = $("sigCanvas");
+  const clearSigBtn = $("clearSigBtn");
 
-    receiverName: $("receiverName"),
-    note: $("note"),
-    sig: $("sig"),
-    clearSigBtn: $("clearSigBtn"),
-    saveBtn: $("saveBtn"),
+  const file1 = $("file1");
+  const file2 = $("file2");
+  const deleteFile1Btn = $("deleteFile1Btn");
+  const deleteFile2Btn = $("deleteFile2Btn");
+  const file1Info = $("file1Info");
+  const file2Info = $("file2Info");
 
-    isClosed: $("isClosed"),
-    autoPod: $("autoPod"),
+  const saveEventBtn = $("saveEventBtn");
+  const archiveBtn = $("archiveBtn");
+  const pdfBtn = $("pdfBtn");
 
-    proofFiles: $("proofFiles"),
-    proofList: $("proofList"),
+  const logoutBtn = $("logoutBtn");
+  const newShipmentBtn = $("newShipmentBtn");
 
-    pdfBtn: $("pdfBtn"),
-  };
+  const BUCKET = "delivery-files";
 
-  const BUCKET = "delivery-proofs";
+  let currentShipment = null; // shipment row
+  let currentActiveStatus = null; // pickup/in_transit/delivered/problem
+  let signatureDrawing = false;
 
-  let state = {
-    user: null,
-    tab: "open",
-    shipments: [],
-    current: null,
-    selectedStatus: null,
-    drawing: false,
-    deliveredCache: new Map(), // shipment_id -> { receiver_name, note, signature_dataurl, proof_paths, proof_names, proof_mimes }
-  };
+  function showMsg(el, text, type = "bad") {
+    el.style.display = "block";
+    el.className = "msg " + type;
+    el.textContent = text;
+  }
+  function hideMsg(el) {
+    el.style.display = "none";
+  }
 
-  const statusNL = (s) => {
-    const v = String(s || "").toLowerCase();
+  function statusNl(status) {
     const map = {
       created: "Aangemeld",
       pickup: "Opgehaald",
       in_transit: "Onderweg",
       delivered: "Afgeleverd",
       problem: "Probleem",
+      archived: "Afgehandeld"
     };
-    return map[v] || s || "-";
-  };
+    return map[status] || status || "-";
+  }
 
-  const escapeHtml = (t) =>
-    String(t ?? "").replace(/[&<>"']/g, (m) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    }[m]));
-
-  const fmt = (iso) => {
+  function fmtDate(iso) {
     if (!iso) return "-";
-    try { return new Date(iso).toLocaleString("nl-NL"); }
-    catch { return iso; }
-  };
-
-  function showMsg(text) {
-    el.pageMsg.style.display = text ? "block" : "none";
-    el.pageMsg.textContent = text || "";
-  }
-  function showModalErr(text) {
-    el.modalMsg.style.display = text ? "block" : "none";
-    el.modalMsg.textContent = text || "";
-    el.modalOk.style.display = "none";
-  }
-  function showModalOk(text) {
-    el.modalOk.style.display = text ? "block" : "none";
-    el.modalOk.textContent = text || "";
-    el.modalMsg.style.display = "none";
-  }
-
-  function setActiveStatusButton(status) {
-    const all = [el.btnPickup, el.btnTransit, el.btnDelivered, el.btnProblem];
-    all.forEach(b => b.classList.remove("active-green"));
-
-    const map = {
-      pickup: el.btnPickup,
-      in_transit: el.btnTransit,
-      delivered: el.btnDelivered,
-      problem: el.btnProblem,
-    };
-    const btn = map[status];
-    if (btn) btn.classList.add("active-green");
-  }
-
-  async function requireAuth() {
-    if (!sb) {
-      showMsg("Supabase client ontbreekt. Check supabase-config.js");
-      throw new Error("no client");
+    try {
+      return new Date(iso).toLocaleString("nl-NL");
+    } catch {
+      return iso;
     }
-
-    const { data, error } = await sb.auth.getSession();
-    if (error) throw error;
-
-    const user = data?.session?.user;
-    if (!user) {
-      location.href = "./login.html";
-      throw new Error("no session");
-    }
-
-    state.user = user;
-    el.userEmail.textContent = user.email || "-";
   }
 
-  async function loadShipments() {
-    showMsg("");
-    el.tbody.innerHTML = `<tr><td colspan="7" class="muted">Laden…</td></tr>`;
+  function setActiveButton(status) {
+    currentActiveStatus = status;
 
-    const closed = state.tab === "archive";
-
-    const { data, error } = await sb
-      .from("shipments")
-      .select("id, track_code, customer_name, status, colli_count, weight_kg, updated_at, is_closed, pod_pdf_path")
-      .eq("driver_id", state.user.id)
-      .eq("is_closed", closed)
-      .order("updated_at", { ascending: false });
-
-    if (error) {
-      showMsg(error.message);
-      el.tbody.innerHTML = `<tr><td colspan="7" class="muted">Geen zendingen.</td></tr>`;
-      return;
-    }
-
-    state.shipments = data || [];
-
-    if (!state.shipments.length) {
-      el.tbody.innerHTML = `<tr><td colspan="7" class="muted">Geen zendingen.</td></tr>`;
-      return;
-    }
-
-    el.tbody.innerHTML = state.shipments.map(s => `
-      <tr>
-        <td><b>${escapeHtml(s.track_code || "-")}</b></td>
-        <td>${escapeHtml(s.customer_name || "-")}</td>
-        <td>${escapeHtml(statusNL(s.status))}</td>
-        <td>${escapeHtml(s.colli_count ?? "-")}</td>
-        <td>${escapeHtml(s.weight_kg ?? "-")}</td>
-        <td class="muted">${escapeHtml(fmt(s.updated_at))}</td>
-        <td>
-          <button class="btn small" data-id="${s.id}" type="button">Wijzigen</button>
-        </td>
-      </tr>
-    `).join("");
-
-    el.tbody.querySelectorAll("button[data-id]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const id = btn.getAttribute("data-id");
-        const shipment = state.shipments.find(x => String(x.id) === String(id));
-        if (shipment) await openModal(shipment);
-      });
+    // reset
+    [btnPickup, btnTransit, btnDelivered, btnProblem].forEach(b => {
+      b.classList.remove("activeGlow");
+      b.classList.remove("green");
+      b.classList.add("gray");
     });
+
+    // active -> green glow
+    let btn = null;
+    if (status === "pickup") btn = btnPickup;
+    if (status === "in_transit") btn = btnTransit;
+    if (status === "delivered") btn = btnDelivered;
+    if (status === "problem") btn = btnProblem;
+
+    if (btn) {
+      btn.classList.remove("gray");
+      btn.classList.add("green");
+      btn.classList.add("activeGlow");
+    }
   }
 
-  // ---------- Signature ----------
+  // ---------- Signature pad ----------
+  function getCanvasPos(e) {
+    const rect = sigCanvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
   function setupSignature() {
-    const c = el.sig;
-    if (!c) return;
-    const ctx = c.getContext("2d");
+    const ctx = sigCanvas.getContext("2d");
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "white";
 
-    function pos(ev) {
-      const r = c.getBoundingClientRect();
-      const e = ev.touches ? ev.touches[0] : ev;
-      const x = (e.clientX - r.left) * (c.width / r.width);
-      const y = (e.clientY - r.top) * (c.height / r.height);
-      return { x, y };
-    }
-
-    function down(ev) {
-      state.drawing = true;
-      const p = pos(ev);
+    function start(e) {
+      signatureDrawing = true;
+      const p = getCanvasPos(e);
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
-      ev.preventDefault?.();
+      e.preventDefault();
     }
-
-    function move(ev) {
-      if (!state.drawing) return;
-      const p = pos(ev);
+    function move(e) {
+      if (!signatureDrawing) return;
+      const p = getCanvasPos(e);
       ctx.lineTo(p.x, p.y);
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "#111";
       ctx.stroke();
-      ev.preventDefault?.();
+      e.preventDefault();
+    }
+    function end(e) {
+      signatureDrawing = false;
+      e.preventDefault();
     }
 
-    function up() { state.drawing = false; }
+    sigCanvas.addEventListener("mousedown", start);
+    sigCanvas.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
 
-    c.addEventListener("mousedown", down);
-    c.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    sigCanvas.addEventListener("touchstart", start, { passive: false });
+    sigCanvas.addEventListener("touchmove", move, { passive: false });
+    sigCanvas.addEventListener("touchend", end, { passive: false });
 
-    c.addEventListener("touchstart", down, { passive:false });
-    c.addEventListener("touchmove", move, { passive:false });
-    window.addEventListener("touchend", up);
-  }
-
-  function clearSignature() {
-    const c = el.sig;
-    const ctx = c.getContext("2d");
-    ctx.clearRect(0, 0, c.width, c.height);
-  }
-
-  function drawSignatureFromDataUrl(dataUrl) {
-    if (!dataUrl) return;
-    const c = el.sig;
-    const ctx = c.getContext("2d");
-    const img = new Image();
-    img.onload = () => {
-      clearSignature();
-      ctx.drawImage(img, 0, 0, c.width, c.height);
-    };
-    img.src = dataUrl;
-  }
-
-  function signatureHasInk() {
-    const c = el.sig;
-    const ctx = c.getContext("2d");
-    const pixels = ctx.getImageData(0, 0, c.width, c.height).data;
-    for (let i = 0; i < pixels.length; i += 4) {
-      if (pixels[i+3] !== 0) return true;
-    }
-    return false;
-  }
-
-  function signatureDataUrl() {
-    return el.sig.toDataURL("image/png");
-  }
-
-  // ---------- Proof UI ----------
-  function renderProofList(items) {
-    el.proofList.innerHTML = "";
-    (items || []).forEach((it, idx) => {
-      const chip = document.createElement("div");
-      chip.className = "chip";
-      chip.innerHTML = `<b>${idx + 1}.</b> <span>${escapeHtml(it.name || it.path || "bestand")}</span>`;
-      el.proofList.appendChild(chip);
+    clearSigBtn.addEventListener("click", () => {
+      ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
     });
   }
 
-  function getSelectedProofFiles() {
-    const files = Array.from(el.proofFiles?.files || []);
-    if (files.length > 2) {
-      // hard enforce: max 2
-      el.proofFiles.value = "";
-      throw new Error("Maximaal 2 bestanden uploaden.");
-    }
-    return files;
+  function resizeCanvasForHiDpi() {
+    const ratio = window.devicePixelRatio || 1;
+    const rect = sigCanvas.getBoundingClientRect();
+    sigCanvas.width = Math.floor(rect.width * ratio);
+    sigCanvas.height = Math.floor(rect.height * ratio);
+    const ctx = sigCanvas.getContext("2d");
+    ctx.scale(ratio, ratio);
   }
 
-  // ---------- Fetch latest delivered data for prefill ----------
-  async function fetchLatestDeliveredData(shipmentId) {
-    if (state.deliveredCache.has(shipmentId)) return state.deliveredCache.get(shipmentId);
-
-    const { data, error } = await sb
-      .from("shipment_events")
-      .select("*")
-      .eq("shipment_id", shipmentId)
-      .order("created_at", { ascending: false })
-      .limit(30);
-
-    if (error) return null;
-
-    const rows = data || [];
-    const delivered = rows.find(r => String(r.event_type || "").toLowerCase() === "delivered")
-      || rows.find(r => r.receiver_name || r.signature_dataurl || r.signature_data_url);
-
-    if (!delivered) return null;
-
-    const pack = {
-      receiver_name: delivered.receiver_name || "",
-      note: delivered.note || "",
-      signature_dataurl: delivered.signature_dataurl || delivered.signature_data_url || "",
-      proof_paths: delivered.proof_paths || [],
-      proof_names: delivered.proof_names || [],
-      proof_mimes: delivered.proof_mimes || [],
-    };
-
-    state.deliveredCache.set(shipmentId, pack);
-    return pack;
+  function getSignatureDataUrl() {
+    // check if empty-ish: we do a quick pixel test
+    const ctx = sigCanvas.getContext("2d");
+    const img = ctx.getImageData(0, 0, sigCanvas.width, sigCanvas.height).data;
+    let hasInk = false;
+    for (let i = 0; i < img.length; i += 4) {
+      if (img[i + 3] !== 0) { hasInk = true; break; }
+    }
+    if (!hasInk) return null;
+    return sigCanvas.toDataURL("image/png");
   }
 
   // ---------- Modal ----------
-  async function openModal(shipment) {
-    state.current = shipment;
-    state.selectedStatus = shipment.status || "created";
+  function openModal(shipment) {
+    currentShipment = shipment;
+    hideMsg(modalError);
 
-    el.mTrack.textContent = shipment.track_code || "-";
-    el.mStatus.textContent = statusNL(shipment.status);
+    modalTrack.textContent = shipment.track_code || shipment.id;
 
-    el.isClosed.checked = !!shipment.is_closed;
-    setActiveStatusButton(state.selectedStatus);
+    // prefill fields from latest delivered event if exists (so it doesn't reset)
+    receiverName.value = shipment._lastDelivered?.receiver_name || "";
+    note.value = shipment._lastDelivered?.note || "";
 
-    // reset file input
-    if (el.proofFiles) el.proofFiles.value = "";
-    renderProofList([]);
-
-    // default clear
-    el.receiverName.value = "";
-    el.note.value = "";
-    clearSignature();
-
-    // Prefill if already delivered
-    if (String(shipment.status || "").toLowerCase() === "delivered") {
-      const pack = await fetchLatestDeliveredData(shipment.id);
-      if (pack) {
-        el.receiverName.value = pack.receiver_name || "";
-        el.note.value = pack.note || "";
-        if (pack.signature_dataurl) drawSignatureFromDataUrl(pack.signature_dataurl);
-
-        // show previously uploaded proofs as list (names)
-        const proofItems = (pack.proof_paths || []).map((p, i) => ({
-          path: p,
-          name: (pack.proof_names || [])[i] || p
-        }));
-        renderProofList(proofItems);
-      }
+    // Load signature if exists
+    const ctx = sigCanvas.getContext("2d");
+    ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+    const sig = shipment._lastDelivered?.signature_data;
+    if (sig && typeof sig === "string" && sig.startsWith("data:image")) {
+      const img = new Image();
+      img.onload = () => {
+        // draw into canvas
+        ctx.drawImage(img, 0, 0, sigCanvas.width / (window.devicePixelRatio || 1), sigCanvas.height / (window.devicePixelRatio || 1));
+      };
+      img.src = sig;
     }
 
-    el.modalBackdrop.style.display = "flex";
-    showModalErr("");
-    showModalOk("");
+    // Show existing attachments
+    file1.value = "";
+    file2.value = "";
+    file1Info.textContent = shipment._lastDelivered?.attachment1_url ? `1: ${shipment._lastDelivered.attachment1_url}` : "1: -";
+    file2Info.textContent = shipment._lastDelivered?.attachment2_url ? `2: ${shipment._lastDelivered.attachment2_url}` : "2: -";
+
+    // highlight current status
+    setActiveButton(shipment.status);
+
+    modalBackdrop.style.display = "flex";
   }
 
   function closeModal() {
-    el.modalBackdrop.style.display = "none";
-    state.current = null;
-    state.selectedStatus = null;
-    showModalErr("");
-    showModalOk("");
+    modalBackdrop.style.display = "none";
+    currentShipment = null;
+    currentActiveStatus = null;
   }
 
-  // ---------- Upload proofs to Storage (max 2) ----------
-  async function uploadProofFiles(shipment, files) {
-    if (!files.length) return { paths: [], names: [], mimes: [] };
+  closeModalBtn.addEventListener("click", closeModal);
 
-    const paths = [];
-    const names = [];
-    const mimes = [];
+  // ---------- Upload helpers ----------
+  function safeFileName(name) {
+    return name.replace(/[^\w.\-]+/g, "_");
+  }
 
-    for (const f of files) {
-      const safeName = f.name.replace(/[^\w.\-]+/g, "_");
-      const path = `${shipment.id}/${Date.now()}_${safeName}`;
+  async function uploadToStorage(file, shipmentId, slot) {
+    // slot: 1 or 2
+    const ext = (file.name.split(".").pop() || "bin").toLowerCase();
+    const path = `shipments/${shipmentId}/attachment_${slot}_${Date.now()}_${safeFileName(file.name)}`;
 
-      const { error } = await sb.storage.from(BUCKET).upload(path, f, {
-        cacheControl: "3600",
-        upsert: false,
-        contentType: f.type || "application/octet-stream",
-      });
+    const { error: upErr } = await supabaseClient.storage.from(BUCKET).upload(path, file, {
+      cacheControl: "3600",
+      upsert: true,
+      contentType: file.type || undefined
+    });
 
-      if (error) throw new Error(`Upload mislukt (${f.name}): ${error.message}`);
+    if (upErr) throw upErr;
 
-      paths.push(path);
-      names.push(f.name);
-      mimes.push(f.type || "");
+    // public url (bucket public)
+    const { data } = supabaseClient.storage.from(BUCKET).getPublicUrl(path);
+    return data.publicUrl;
+  }
+
+  async function deleteFromStorageByUrl(publicUrl) {
+    try {
+      if (!publicUrl) return;
+      // publicUrl looks like: https://xxxx.supabase.co/storage/v1/object/public/delivery-files/shipments/....
+      const marker = `/storage/v1/object/public/${BUCKET}/`;
+      const idx = publicUrl.indexOf(marker);
+      if (idx === -1) return;
+      const objectPath = publicUrl.substring(idx + marker.length);
+
+      const { error } = await supabaseClient.storage.from(BUCKET).remove([objectPath]);
+      if (error) console.warn("Delete storage error:", error);
+    } catch (e) {
+      console.warn("deleteFromStorageByUrl failed:", e);
+    }
+  }
+
+  // ---------- DB helpers ----------
+  async function fetchShipmentsWithLastDelivered() {
+    // active shipments only (not archived)
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) {
+      showMsg(msg, "Je bent niet ingelogd.", "bad");
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">Niet ingelogd.</td></tr>`;
+      return [];
     }
 
-    return { paths, names, mimes };
+    whoami.textContent = `Ingelogd als: ${user.email}`;
+
+    // shipments
+    const { data: shipments, error } = await supabaseClient
+      .from("shipments")
+      .select("id, track_code, customer_name, status, colli_count, weight_kg, updated_at, driver_id")
+      .eq("driver_id", user.id)
+      .neq("status", "archived")
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
+
+    // fetch last delivered events for prefill
+    const ids = shipments.map(s => s.id);
+    let deliveredMap = {};
+    if (ids.length > 0) {
+      const { data: deliveredEvents, error: evErr } = await supabaseClient
+        .from("shipment_events")
+        .select("shipment_id, created_at, receiver_name, note, signature_data, attachment1_url, attachment2_url")
+        .in("shipment_id", ids)
+        .eq("event_type", "delivered")
+        .order("created_at", { ascending: false });
+
+      if (evErr) throw evErr;
+
+      for (const ev of deliveredEvents) {
+        if (!deliveredMap[ev.shipment_id]) deliveredMap[ev.shipment_id] = ev; // first is newest due to ordering
+      }
+    }
+
+    return shipments.map(s => ({ ...s, _lastDelivered: deliveredMap[s.id] || null }));
   }
 
-  // ---------- Fetch timeline for PDF ----------
-  async function fetchTimeline(shipmentId) {
-    const { data, error } = await sb
+  function renderShipments(rows) {
+    if (!rows || rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">Geen zendingen.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = rows.map(s => {
+      return `
+        <tr>
+          <td><b>${s.track_code || "-"}</b></td>
+          <td>${s.customer_name || "-"}</td>
+          <td>${statusNl(s.status)}</td>
+          <td>${s.colli_count ?? "-"}</td>
+          <td>${s.weight_kg ?? "-"}</td>
+          <td>${fmtDate(s.updated_at)}</td>
+          <td>
+            <button class="btn" data-action="edit" data-id="${s.id}">Wijzigen</button>
+            <button class="btn blue" data-action="pdf" data-id="${s.id}">PDF</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  async function reload() {
+    hideMsg(msg);
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">Laden...</td></tr>`;
+    try {
+      const rows = await fetchShipmentsWithLastDelivered();
+      renderShipments(rows);
+      window.__dvkRows = rows; // debug
+    } catch (e) {
+      console.error(e);
+      showMsg(msg, `Fout bij laden: ${e.message || e}`, "bad");
+      tbody.innerHTML = `<tr><td colspan="7" class="muted">Fout bij laden.</td></tr>`;
+    }
+  }
+
+  // ---------- Event saving ----------
+  async function saveEvent(eventType) {
+    if (!currentShipment) return;
+
+    hideMsg(modalError);
+
+    // if delivered, we want receiver + signature optionally
+    const receiver = receiverName.value.trim() || null;
+    const n = note.value.trim() || null;
+    const sig = getSignatureDataUrl();
+
+    // upload new files if selected
+    let att1Url = currentShipment._lastDelivered?.attachment1_url || null;
+    let att2Url = currentShipment._lastDelivered?.attachment2_url || null;
+
+    try {
+      // file 1 upload
+      if (file1.files && file1.files[0]) {
+        const url = await uploadToStorage(file1.files[0], currentShipment.id, 1);
+        att1Url = url;
+        file1Info.textContent = `1: ${url}`;
+      }
+      // file 2 upload
+      if (file2.files && file2.files[0]) {
+        const url = await uploadToStorage(file2.files[0], currentShipment.id, 2);
+        att2Url = url;
+        file2Info.textContent = `2: ${url}`;
+      }
+
+      // insert event
+      const payload = {
+        shipment_id: currentShipment.id,
+        event_type: eventType,
+        note: n
+      };
+
+      // only store receiver/signature/attachments on delivered (or allow for any if you prefer)
+      if (eventType === "delivered") {
+        payload.receiver_name = receiver;
+        payload.signature_data = sig;
+        payload.attachment1_url = att1Url;
+        payload.attachment2_url = att2Url;
+      }
+
+      const { error: insErr } = await supabaseClient
+        .from("shipment_events")
+        .insert(payload);
+
+      if (insErr) throw insErr;
+
+      // update shipment status
+      const { error: upErr } = await supabaseClient
+        .from("shipments")
+        .update({ status: eventType, updated_at: new Date().toISOString() })
+        .eq("id", currentShipment.id);
+
+      if (upErr) throw upErr;
+
+      // refresh current shipment lastDelivered if delivered
+      if (eventType === "delivered") {
+        currentShipment._lastDelivered = {
+          receiver_name: receiver,
+          note: n,
+          signature_data: sig,
+          attachment1_url: att1Url,
+          attachment2_url: att2Url
+        };
+      }
+
+      // keep form filled after save (your request)
+      setActiveButton(eventType);
+
+      await reload();
+      showMsg(modalError, "Opgeslagen ✅", "ok");
+      setTimeout(() => hideMsg(modalError), 1200);
+    } catch (e) {
+      console.error(e);
+      showMsg(modalError, `Event opslaan mislukt: ${e.message || e}`, "bad");
+    }
+  }
+
+  // ---------- Delete attachments ----------
+  async function deleteAttachment(slot) {
+    if (!currentShipment) return;
+    hideMsg(modalError);
+
+    try {
+      // which url
+      const last = currentShipment._lastDelivered || {};
+      const url = slot === 1 ? last.attachment1_url : last.attachment2_url;
+      if (!url) {
+        showMsg(modalError, `Geen bijlage ${slot} om te verwijderen.`, "warn");
+        setTimeout(() => hideMsg(modalError), 1200);
+        return;
+      }
+
+      // delete from storage
+      await deleteFromStorageByUrl(url);
+
+      // update latest delivered row in DB:
+      // we update ALL delivered events for this shipment? Nee: we updaten de nieuwste delivered event.
+      const { data: deliveredEvents, error: evErr } = await supabaseClient
+        .from("shipment_events")
+        .select("id, created_at")
+        .eq("shipment_id", currentShipment.id)
+        .eq("event_type", "delivered")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (evErr) throw evErr;
+      const latest = deliveredEvents?.[0];
+      if (!latest) throw new Error("Geen delivered event gevonden om bijlage te updaten.");
+
+      const patch = {};
+      if (slot === 1) patch.attachment1_url = null;
+      if (slot === 2) patch.attachment2_url = null;
+
+      const { error: updErr } = await supabaseClient
+        .from("shipment_events")
+        .update(patch)
+        .eq("id", latest.id);
+
+      if (updErr) throw updErr;
+
+      // update local
+      if (!currentShipment._lastDelivered) currentShipment._lastDelivered = {};
+      if (slot === 1) currentShipment._lastDelivered.attachment1_url = null;
+      if (slot === 2) currentShipment._lastDelivered.attachment2_url = null;
+
+      if (slot === 1) file1Info.textContent = "1: -";
+      if (slot === 2) file2Info.textContent = "2: -";
+
+      showMsg(modalError, `Bijlage ${slot} verwijderd ✅`, "ok");
+      setTimeout(() => hideMsg(modalError), 1200);
+    } catch (e) {
+      console.error(e);
+      showMsg(modalError, `Verwijderen mislukt: ${e.message || e}`, "bad");
+    }
+  }
+
+  // ---------- Archive ----------
+  async function archiveShipment() {
+    if (!currentShipment) return;
+    hideMsg(modalError);
+
+    try {
+      const { error } = await supabaseClient
+        .from("shipments")
+        .update({ status: "archived", archived_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", currentShipment.id);
+
+      if (error) throw error;
+
+      await reload();
+      closeModal();
+    } catch (e) {
+      console.error(e);
+      showMsg(modalError, `Archiveren mislukt: ${e.message || e}`, "bad");
+    }
+  }
+
+  // ---------- PDF ----------
+  async function generateDeliveryPdf(shipmentId) {
+    if (!window.supabaseClient) {
+      alert("Supabase client ontbreekt.");
+      return;
+    }
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      alert("jsPDF library ontbreekt.");
+      return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+    const { data: shipment, error: shipErr } = await supabaseClient
+      .from("shipments")
+      .select(`
+        id, track_code, customer_name, status, colli_count, weight_kg,
+        pickup_address, dropoff_address, shipment_type,
+        updated_at, created_at, archived_at
+      `)
+      .eq("id", shipmentId)
+      .single();
+
+    if (shipErr) {
+      console.error(shipErr);
+      alert("Kon zending niet ophalen voor PDF.");
+      return;
+    }
+
+    const { data: events, error: evErr } = await supabaseClient
       .from("shipment_events")
-      .select("event_type, note, receiver_name, created_at, signature_dataurl, signature_data_url")
+      .select("event_type, created_at, note, receiver_name, signature_data, attachment1_url, attachment2_url")
       .eq("shipment_id", shipmentId)
       .order("created_at", { ascending: true });
 
-    if (error) throw new Error(error.message);
-    return data || [];
-  }
+    if (evErr) {
+      console.error(evErr);
+      alert("Kon events niet ophalen voor PDF.");
+      return;
+    }
 
-  // ---------- PDF generate (client side) ----------
-  async function buildPdfBlob(shipment) {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const mapStatus = (s) => ({
+      created: "Aangemeld",
+      pickup: "Opgehaald",
+      in_transit: "Onderweg",
+      delivered: "Afgeleverd",
+      problem: "Probleem",
+      cancelled: "Geannuleerd",
+      archived: "Afgehandeld",
+    }[s] || s || "-");
 
-    const margin = 40;
-    let y = 46;
+    const formatDate = (iso) => iso ? new Date(iso).toLocaleString("nl-NL") : "-";
 
-    const line = (txt, inc = 18) => {
-      doc.text(String(txt), margin, y);
-      y += inc;
-      if (y > 770) { doc.addPage(); y = 46; }
-    };
+    const deliveredEvent = [...(events || [])].reverse().find(e => e.event_type === "delivered") || null;
 
+    let y = 14;
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
-    line("De Vechtse Koeriers — Afleverbon / POD", 24);
+    doc.text("Afleverbon – De Vechtse Koeriers", 14, y);
+    y += 8;
 
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(11);
-    line(`Trackcode: ${shipment.track_code || "-"}`);
-    line(`Klant: ${shipment.customer_name || "-"}`);
-    line(`Status: ${statusNL(shipment.status)}`);
-    line(`Colli: ${shipment.colli_count ?? "-"}`);
-    line(`Kg: ${shipment.weight_kg ?? "-"}`);
-    line(`Datum/tijd: ${new Date().toLocaleString("nl-NL")}`, 22);
 
-    doc.setFontSize(12);
-    line("Tijdlijn:", 20);
-    doc.setFontSize(10);
+    const lines = [
+      `Trackcode: ${shipment.track_code || "-"}`,
+      `Klant: ${shipment.customer_name || "-"}`,
+      `Status: ${mapStatus(shipment.status)}`,
+      `Ophaaladres: ${shipment.pickup_address || "-"}`,
+      `Bezorgadres: ${shipment.dropoff_address || "-"}`,
+      `Type zending: ${shipment.shipment_type || "-"}`,
+      `Colli: ${shipment.colli_count ?? "-"}`,
+      `Kg: ${shipment.weight_kg ?? "-"}`,
+      `Aangemaakt: ${formatDate(shipment.created_at)}`,
+      `Laatst bijgewerkt: ${formatDate(shipment.updated_at)}`,
+      `Afgehandeld (archief): ${shipment.archived_at ? formatDate(shipment.archived_at) : "nee"}`,
+    ];
 
-    const events = await fetchTimeline(shipment.id);
-    events.forEach(ev => {
-      line(`- ${fmt(ev.created_at)} — ${statusNL(ev.event_type)}${ev.note ? " — " + ev.note : ""}`, 14);
-      if (ev.event_type === "delivered" && ev.receiver_name) {
-        line(`  Ontvangen door: ${ev.receiver_name}`, 14);
-      }
-    });
+    doc.text(lines, 14, y);
+    y += lines.length * 6 + 4;
 
-    // Handtekening uit laatste delivered-event
-    const lastDelivered = [...events].reverse().find(e => String(e.event_type).toLowerCase() === "delivered");
-    const sigUrl = lastDelivered?.signature_dataurl || lastDelivered?.signature_data_url || "";
+    doc.setFont("helvetica", "bold");
+    doc.text("Tijdlijn", 14, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
 
-    if (sigUrl) {
-      line("", 10);
-      doc.setFontSize(12);
-      line("Handtekening:", 18);
-
-      // Plaats signature image
-      try {
-        // jsPDF kan dataURL direct
-        doc.addImage(sigUrl, "PNG", margin, y, 240, 120);
-        y += 140;
-      } catch {
-        line("(Handtekening kon niet worden ingesloten)", 16);
-      }
+    if (!events || events.length === 0) {
+      doc.text("- Geen gebeurtenissen", 14, y);
+      y += 6;
     } else {
-      line("", 10);
-      line("Handtekening: (geen)", 16);
-    }
+      for (const ev of events) {
+        const row = `${formatDate(ev.created_at)} — ${mapStatus(ev.event_type)}${ev.note ? ` — ${ev.note}` : ""}`;
+        const wrapped = doc.splitTextToSize(row, 180);
+        doc.text(wrapped, 14, y);
+        y += wrapped.length * 6;
 
-    // Bewijsstukken (we zetten ze als tekst, omdat ze private zijn)
-    const pack = await fetchLatestDeliveredData(shipment.id);
-    const proofNames = pack?.proof_names || [];
-    if (proofNames.length) {
-      line("", 10);
-      doc.setFontSize(12);
-      line("Bewijsstukken (intern):", 18);
-      doc.setFontSize(10);
-      proofNames.forEach(n => line(`- ${n}`, 14));
-      line("NB: Bewijsstukken zijn alleen intern beschikbaar.", 16);
-    }
-
-    return doc.output("blob");
-  }
-
-  async function uploadPdfToStorage(shipment, pdfBlob) {
-    const fileName = `${(shipment.track_code || "POD").replace(/[^\w\-]+/g, "_")}.pdf`;
-    const path = `${shipment.id}/POD_${fileName}`;
-
-    const { error } = await sb.storage.from(BUCKET).upload(path, pdfBlob, {
-      cacheControl: "3600",
-      upsert: true,
-      contentType: "application/pdf",
-    });
-
-    if (error) throw new Error("PDF upload mislukt: " + error.message);
-
-    // store path on shipment
-    const { error: upErr } = await sb
-      .from("shipments")
-      .update({ pod_pdf_path: path })
-      .eq("id", shipment.id);
-
-    if (upErr) throw new Error("POD path opslaan mislukt: " + upErr.message);
-
-    return path;
-  }
-
-  async function downloadPdf(shipment) {
-    const blob = await buildPdfBlob(shipment);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `DVK_POD_${shipment.track_code || "zending"}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  // ---------- Save ----------
-  async function saveChange() {
-    if (!state.current) return;
-    const ship = state.current;
-
-    const newStatus = state.selectedStatus || ship.status || "created";
-    const note = (el.note.value || "").trim();
-    const receiver = (el.receiverName.value || "").trim();
-
-    try {
-      const selectedFiles = getSelectedProofFiles();
-
-      // validations
-      if (newStatus === "delivered") {
-        if (!receiver) return showModalErr("Vul 'Ontvangen door' in.");
-        if (!signatureHasInk()) return showModalErr("Zet een handtekening.");
-      }
-      if (newStatus === "problem" && !note) {
-        return showModalErr("Bij 'Probleem' is een notitie verplicht.");
-      }
-
-      // 1) shipment update
-      const { error: upErr } = await sb
-        .from("shipments")
-        .update({
-          status: newStatus,
-          is_closed: !!el.isClosed.checked
-        })
-        .eq("id", ship.id);
-
-      if (upErr) return showModalErr("Opslaan mislukt (shipment): " + upErr.message);
-
-      // 2) upload proofs (only if selected)
-      let proof = { paths: [], names: [], mimes: [] };
-      if (selectedFiles.length) {
-        proof = await uploadProofFiles(ship, selectedFiles);
-      }
-
-      // 3) insert event
-      const sigUrl = newStatus === "delivered" ? signatureDataUrl() : null;
-
-      const payload = {
-        shipment_id: ship.id,
-        event_type: newStatus,
-        note: note || null,
-        receiver_name: newStatus === "delivered" ? receiver : null,
-        signature_dataurl: newStatus === "delivered" ? sigUrl : null,
-        proof_paths: proof.paths,
-        proof_names: proof.names,
-        proof_mimes: proof.mimes,
-      };
-
-      const { error: evErr } = await sb.from("shipment_events").insert(payload);
-      if (evErr) return showModalErr("Event opslaan mislukt: " + evErr.message);
-
-      // cache delivered data
-      if (newStatus === "delivered") {
-        state.deliveredCache.set(ship.id, {
-          receiver_name: receiver,
-          note: note,
-          signature_dataurl: sigUrl,
-          proof_paths: proof.paths,
-          proof_names: proof.names,
-          proof_mimes: proof.mimes,
-        });
-      }
-
-      // 4) auto POD bij archiveren (optioneel)
-      if (el.isClosed.checked && el.autoPod.checked) {
-        const freshShipment = await getShipmentById(ship.id);
-        const pdfBlob = await buildPdfBlob(freshShipment);
-        await uploadPdfToStorage(freshShipment, pdfBlob);
-      }
-
-      showModalOk("Opgeslagen ✅");
-      closeModal();
-      await loadShipments();
-    } catch (e) {
-      console.error(e);
-      showModalErr(e.message || String(e));
-    }
-  }
-
-  async function getShipmentById(id) {
-    const { data, error } = await sb
-      .from("shipments")
-      .select("*")
-      .eq("id", id)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return data;
-  }
-
-  // ---------- Tab / logout ----------
-  function setTab(tab) {
-    state.tab = tab;
-    el.tabOpen.classList.toggle("active", tab === "open");
-    el.tabArchive.classList.toggle("active", tab === "archive");
-    loadShipments();
-  }
-
-  async function logout() {
-    await sb.auth.signOut();
-    location.href = "./login.html";
-  }
-
-  // ---------- init ----------
-  async function init() {
-    await requireAuth();
-    setupSignature();
-
-    el.closeModalBtn.addEventListener("click", closeModal);
-    el.clearSigBtn.addEventListener("click", clearSignature);
-    el.saveBtn.addEventListener("click", saveChange);
-
-    el.pdfBtn.addEventListener("click", async () => {
-      if (!state.current) return;
-      try {
-        const fresh = await getShipmentById(state.current.id);
-        await downloadPdf(fresh);
-      } catch (e) {
-        showModalErr("PDF maken mislukt: " + (e.message || e));
-      }
-    });
-
-    // status buttons (select + highlight + NL label)
-    el.btnPickup.addEventListener("click", () => {
-      state.selectedStatus = "pickup";
-      setActiveStatusButton("pickup");
-      el.mStatus.textContent = statusNL("pickup");
-    });
-
-    el.btnTransit.addEventListener("click", () => {
-      state.selectedStatus = "in_transit";
-      setActiveStatusButton("in_transit");
-      el.mStatus.textContent = statusNL("in_transit");
-    });
-
-    el.btnDelivered.addEventListener("click", async () => {
-      state.selectedStatus = "delivered";
-      setActiveStatusButton("delivered");
-      el.mStatus.textContent = statusNL("delivered");
-
-      // prefill from latest delivered if exists
-      if (state.current) {
-        const pack = await fetchLatestDeliveredData(state.current.id);
-        if (pack) {
-          if (!el.receiverName.value) el.receiverName.value = pack.receiver_name || "";
-          if (!el.note.value) el.note.value = pack.note || "";
-          if (pack.signature_dataurl) drawSignatureFromDataUrl(pack.signature_dataurl);
-
-          const proofItems = (pack.proof_paths || []).map((p, i) => ({
-            path: p,
-            name: (pack.proof_names || [])[i] || p
-          }));
-          if (proofItems.length) renderProofList(proofItems);
+        if (y > 260) {
+          doc.addPage();
+          y = 14;
         }
       }
-    });
-
-    el.btnProblem.addEventListener("click", () => {
-      state.selectedStatus = "problem";
-      setActiveStatusButton("problem");
-      el.mStatus.textContent = statusNL("problem");
-    });
-
-    // file input: max 2 direct feedback
-    el.proofFiles?.addEventListener("change", () => {
-      try {
-        const files = Array.from(el.proofFiles.files || []);
-        if (files.length > 2) {
-          el.proofFiles.value = "";
-          showModalErr("Maximaal 2 bestanden uploaden.");
-          return;
-        }
-        showModalErr("");
-      } catch (e) {
-        showModalErr(e.message);
-      }
-    });
-
-    // tabs + logout
-    el.tabOpen.addEventListener("click", () => setTab("open"));
-    el.tabArchive.addEventListener("click", () => setTab("archive"));
-    el.logoutBtn.addEventListener("click", logout);
-
-    // nieuwe zending knop: jouw bestaande flow blijft
-    el.newBtn?.addEventListener("click", () => {
-      showMsg("Nieuwe zending: gebruik je bestaande flow (deze knop blijft).");
-      setTimeout(() => showMsg(""), 1200);
-    });
-
-    await loadShipments();
-  }
-
-  async function openModal(shipment) {
-    state.current = shipment;
-    state.selectedStatus = shipment.status || "created";
-
-    el.mTrack.textContent = shipment.track_code || "-";
-    el.mStatus.textContent = statusNL(shipment.status);
-
-    el.isClosed.checked = !!shipment.is_closed;
-    setActiveStatusButton(state.selectedStatus);
-
-    // reset file input
-    if (el.proofFiles) el.proofFiles.value = "";
-    renderProofList([]);
-
-    // default clear
-    el.receiverName.value = "";
-    el.note.value = "";
-    clearSignature();
-
-    if (String(shipment.status || "").toLowerCase() === "delivered") {
-      const pack = await fetchLatestDeliveredData(shipment.id);
-      if (pack) {
-        el.receiverName.value = pack.receiver_name || "";
-        el.note.value = pack.note || "";
-        if (pack.signature_dataurl) drawSignatureFromDataUrl(pack.signature_dataurl);
-
-        const proofItems = (pack.proof_paths || []).map((p, i) => ({
-          path: p,
-          name: (pack.proof_names || [])[i] || p
-        }));
-        renderProofList(proofItems);
-      }
     }
 
-    el.modalBackdrop.style.display = "flex";
-    showModalErr("");
-    showModalOk("");
+    y += 6;
+    doc.setFont("helvetica", "bold");
+    doc.text("Aflevering", 14, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+
+    doc.text(`Ontvangen door: ${deliveredEvent?.receiver_name || "-"}`, 14, y); y += 6;
+    doc.text(`Notitie: ${deliveredEvent?.note || "-"}`, 14, y); y += 8;
+
+    // Attachments links
+    const a1 = deliveredEvent?.attachment1_url || null;
+    const a2 = deliveredEvent?.attachment2_url || null;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Bijlagen", 14, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.text(`Bijlage 1: ${a1 || "-"}`, 14, y); y += 6;
+    doc.text(`Bijlage 2: ${a2 || "-"}`, 14, y); y += 10;
+
+    const sig = deliveredEvent?.signature_data;
+    if (sig && typeof sig === "string" && sig.startsWith("data:image")) {
+      if (y > 220) { doc.addPage(); y = 14; }
+      doc.setFont("helvetica", "bold");
+      doc.text("Handtekening", 14, y);
+      y += 4;
+      doc.addImage(sig, "PNG", 14, y + 2, 160, 50);
+      y += 60;
+    } else {
+      doc.text("Handtekening: -", 14, y);
+      y += 6;
+    }
+
+    doc.setFontSize(9);
+    doc.text("De Vechtse Koeriers — afleverbon is opvraagbaar via de vervoerder.", 14, 290);
+
+    const filename = `Afleverbon_${shipment.track_code || shipment.id}.pdf`;
+    doc.save(filename);
   }
 
-  function closeModal() {
-    el.modalBackdrop.style.display = "none";
-    state.current = null;
-    state.selectedStatus = null;
-    showModalErr("");
-    showModalOk("");
-  }
+  // ---------- UI hooks ----------
+  btnPickup.addEventListener("click", () => setActiveButton("pickup"));
+  btnTransit.addEventListener("click", () => setActiveButton("in_transit"));
+  btnDelivered.addEventListener("click", () => setActiveButton("delivered"));
+  btnProblem.addEventListener("click", () => setActiveButton("problem"));
 
-  init().catch((e) => {
-    console.error(e);
-    showMsg(e.message || String(e));
+  saveEventBtn.addEventListener("click", () => {
+    if (!currentActiveStatus) return;
+    saveEvent(currentActiveStatus);
   });
+
+  archiveBtn.addEventListener("click", archiveShipment);
+
+  pdfBtn.addEventListener("click", () => {
+    if (!currentShipment) return;
+    generateDeliveryPdf(currentShipment.id);
+  });
+
+  deleteFile1Btn.addEventListener("click", () => deleteAttachment(1));
+  deleteFile2Btn.addEventListener("click", () => deleteAttachment(2));
+
+  tbody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const action = btn.getAttribute("data-action");
+    const id = btn.getAttribute("data-id");
+
+    const rows = window.__dvkRows || [];
+    const shipment = rows.find(r => r.id === id);
+    if (!shipment) return;
+
+    if (action === "edit") openModal(shipment);
+    if (action === "pdf") generateDeliveryPdf(id);
+  });
+
+  logoutBtn.addEventListener("click", async () => {
+    await supabaseClient.auth.signOut();
+    location.href = "./login.html";
+  });
+
+  newShipmentBtn.addEventListener("click", () => {
+    alert("Nieuwe zending aanmaken zit bij jou al in de bestaande flow. Als je wilt, zet ik die hier ook netjes compleet in.");
+  });
+
+  // ---------- Init ----------
+  async function init() {
+    if (!window.supabaseClient) {
+      showMsg(msg, "Supabase client ontbreekt. Check supabase-config.js", "bad");
+      return;
+    }
+    resizeCanvasForHiDpi();
+    setupSignature();
+    await reload();
+  }
+
+  window.addEventListener("resize", () => {
+    // her-scale canvas
+    resizeCanvasForHiDpi();
+  });
+
+  init();
 })();
