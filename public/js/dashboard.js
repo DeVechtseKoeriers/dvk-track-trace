@@ -1,6 +1,5 @@
 (() => {
   const sb = window.supabaseClient;
-
   const $ = (id) => document.getElementById(id);
 
   const el = {
@@ -41,6 +40,9 @@
     current: null,
     selectedStatus: null,
     drawing: false,
+
+    // cache per shipment_id: { receiver_name, note, signature_dataurl, signature_data_url }
+    deliveredCache: new Map(),
   };
 
   const statusNL = (s) => {
@@ -81,33 +83,6 @@
     el.modalMsg.style.display = "none";
   }
 
-  function openModal(shipment) {
-    state.current = shipment;
-    state.selectedStatus = shipment.status || "created";
-
-    el.mTrack.textContent = shipment.track_code || "-";
-    el.mStatus.textContent = statusNL(shipment.status);
-
-    el.receiverName.value = "";
-    el.note.value = "";
-    el.isClosed.checked = !!shipment.is_closed;
-
-    setActiveStatusButton(state.selectedStatus);
-    clearSignature();
-
-    el.modalBackdrop.style.display = "flex";
-    showModalErr("");
-    showModalOk("");
-  }
-
-  function closeModal() {
-    el.modalBackdrop.style.display = "none";
-    state.current = null;
-    state.selectedStatus = null;
-    showModalErr("");
-    showModalOk("");
-  }
-
   function setActiveStatusButton(status) {
     const all = [el.btnPickup, el.btnTransit, el.btnDelivered, el.btnProblem];
     all.forEach(b => b.classList.remove("active-green"));
@@ -118,7 +93,6 @@
       delivered: el.btnDelivered,
       problem: el.btnProblem,
     };
-
     const btn = map[status];
     if (btn) btn.classList.add("active-green");
   }
@@ -181,10 +155,10 @@
     `).join("");
 
     el.tbody.querySelectorAll("button[data-id]").forEach(btn => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const id = btn.getAttribute("data-id");
         const shipment = state.shipments.find(x => String(x.id) === String(id));
-        if (shipment) openModal(shipment);
+        if (shipment) await openModal(shipment);
       });
     });
   }
@@ -239,6 +213,18 @@
     ctx.clearRect(0, 0, c.width, c.height);
   }
 
+  function drawSignatureFromDataUrl(dataUrl) {
+    if (!dataUrl) return;
+    const c = el.sig;
+    const ctx = c.getContext("2d");
+    const img = new Image();
+    img.onload = () => {
+      clearSignature();
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+    };
+    img.src = dataUrl;
+  }
+
   function signatureHasInk() {
     const c = el.sig;
     const ctx = c.getContext("2d");
@@ -253,6 +239,88 @@
     return el.sig.toDataURL("image/png");
   }
 
+  // ---------- IMPORTANT: Prefill delivered data so you don't retype ----------
+  async function fetchLatestDeliveredData(shipmentId) {
+    // 1) cache check
+    if (state.deliveredCache.has(shipmentId)) {
+      return state.deliveredCache.get(shipmentId);
+    }
+
+    // 2) pull latest delivered event (or latest event with receiver/signature)
+    // We use select("*") so we don't break if your column name is signature_dataurl vs signature_data_url.
+    const { data, error } = await sb
+      .from("shipment_events")
+      .select("*")
+      .eq("shipment_id", shipmentId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      console.warn("fetchLatestDeliveredData error:", error);
+      return null;
+    }
+
+    const rows = data || [];
+    // Prefer delivered event, else anything with receiver/signature
+    const delivered = rows.find(r => String(r.event_type || "").toLowerCase() === "delivered")
+      || rows.find(r => r.receiver_name || r.signature_dataurl || r.signature_data_url);
+
+    if (!delivered) return null;
+
+    const pack = {
+      receiver_name: delivered.receiver_name || "",
+      note: delivered.note || "",
+      // support both possible column names
+      signature_dataurl: delivered.signature_dataurl || "",
+      signature_data_url: delivered.signature_data_url || "",
+    };
+
+    state.deliveredCache.set(shipmentId, pack);
+    return pack;
+  }
+
+  async function openModal(shipment) {
+    state.current = shipment;
+    state.selectedStatus = shipment.status || "created";
+
+    el.mTrack.textContent = shipment.track_code || "-";
+    el.mStatus.textContent = statusNL(shipment.status);
+
+    // Do NOT always wipe fields. We fill them based on status.
+    el.isClosed.checked = !!shipment.is_closed;
+
+    // highlight current status
+    setActiveStatusButton(state.selectedStatus);
+
+    // default: clear note/receiver/sign only if NOT delivered
+    el.receiverName.value = "";
+    el.note.value = "";
+    clearSignature();
+
+    // If already delivered -> prefill from latest delivered event
+    if (String(shipment.status || "").toLowerCase() === "delivered") {
+      const pack = await fetchLatestDeliveredData(shipment.id);
+      if (pack) {
+        el.receiverName.value = pack.receiver_name || "";
+        el.note.value = pack.note || "";
+        const sigUrl = pack.signature_dataurl || pack.signature_data_url || "";
+        if (sigUrl) drawSignatureFromDataUrl(sigUrl);
+      }
+    }
+
+    el.modalBackdrop.style.display = "flex";
+    showModalErr("");
+    showModalOk("");
+  }
+
+  function closeModal() {
+    el.modalBackdrop.style.display = "none";
+    state.current = null;
+    state.selectedStatus = null;
+    showModalErr("");
+    showModalOk("");
+  }
+
   // ---------- Save ----------
   async function saveChange() {
     if (!state.current) return;
@@ -262,7 +330,7 @@
     const note = (el.note.value || "").trim();
     const receiver = (el.receiverName.value || "").trim();
 
-    // Validaties die jouw huidige flow niet slopen
+    // Validations
     if (newStatus === "delivered") {
       if (!receiver) return showModalErr("Vul 'Ontvangen door' in.");
       if (!signatureHasInk()) return showModalErr("Zet een handtekening.");
@@ -282,17 +350,31 @@
 
     if (upErr) return showModalErr("Opslaan mislukt (shipment): " + upErr.message);
 
-    // 2) event insert (blijft zoals je al doet, maar nu met statusselectie)
+    // 2) event insert
+    const sigUrl = newStatus === "delivered" ? signatureDataUrl() : null;
+
     const payload = {
       shipment_id: ship.id,
       event_type: newStatus,
       note: note || null,
       receiver_name: newStatus === "delivered" ? receiver : null,
-      signature_data_url: newStatus === "delivered" ? signatureDataUrl() : null,
+      // Use your existing DB column name:
+      // If your DB uses signature_dataurl (common in your earlier screenshots), keep it.
+      signature_dataurl: newStatus === "delivered" ? sigUrl : null,
     };
 
     const { error: evErr } = await sb.from("shipment_events").insert(payload);
     if (evErr) return showModalErr("Event opslaan mislukt: " + evErr.message);
+
+    // Cache delivered data so next time it opens prefilled (even before DB fetch)
+    if (newStatus === "delivered") {
+      state.deliveredCache.set(ship.id, {
+        receiver_name: receiver,
+        note: note,
+        signature_dataurl: sigUrl,
+        signature_data_url: "",
+      });
+    }
 
     showModalOk("Opgeslagen ✅");
     closeModal();
@@ -321,7 +403,7 @@
     el.clearSigBtn.addEventListener("click", clearSignature);
     el.saveBtn.addEventListener("click", saveChange);
 
-    // Status buttons: alleen selecteren + highlight (groen)
+    // Status buttons: only select + highlight
     el.btnPickup.addEventListener("click", () => {
       state.selectedStatus = "pickup";
       setActiveStatusButton("pickup");
@@ -334,10 +416,21 @@
       el.mStatus.textContent = statusNL("in_transit");
     });
 
-    el.btnDelivered.addEventListener("click", () => {
+    el.btnDelivered.addEventListener("click", async () => {
       state.selectedStatus = "delivered";
       setActiveStatusButton("delivered");
       el.mStatus.textContent = statusNL("delivered");
+
+      // If you click delivered, try to prefill again (useful after reopening)
+      if (state.current) {
+        const pack = await fetchLatestDeliveredData(state.current.id);
+        if (pack) {
+          if (!el.receiverName.value) el.receiverName.value = pack.receiver_name || "";
+          if (!el.note.value) el.note.value = pack.note || "";
+          const sigUrl = pack.signature_dataurl || pack.signature_data_url || "";
+          if (sigUrl) drawSignatureFromDataUrl(sigUrl);
+        }
+      }
     });
 
     el.btnProblem.addEventListener("click", () => {
@@ -353,12 +446,10 @@
     // Logout
     el.logoutBtn.addEventListener("click", logout);
 
-    // Nieuwe zending knop laten we zoals jij ‘m nu hebt (als die elders zit, blijft die werken)
-    // Hier doen we niets “extra’s” dat jouw flow kan breken.
-    // (Als jij al een nieuwe-zending modal hebt in jouw huidige code, kun je die blijven gebruiken.)
+    // New shipment button: keep your existing flow (we don't change it here)
     el.newBtn?.addEventListener("click", () => {
       showMsg("Nieuwe zending: gebruik je bestaande flow (deze knop blijft).");
-      setTimeout(() => showMsg(""), 1500);
+      setTimeout(() => showMsg(""), 1200);
     });
 
     await loadShipments();
