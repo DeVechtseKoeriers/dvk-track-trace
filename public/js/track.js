@@ -1,47 +1,17 @@
-/* public/js/track.js
-   Track & Trace:
-   - zoekt shipment op track_code
-   - events uit shipment_events
-   - status NL
-   - adressen/type/colli/kg met kolom-varianten
-*/
-
+/* global supabaseClient */
 (() => {
-  const sb = window.sb;
-  const $ = (sel) => document.querySelector(sel);
+  const $ = (id) => document.getElementById(id);
 
-  const COLS = {
-    pickup: ["pickup_address", "pickup_addr", "pickup"],
-    dropoff: ["delivery_address", "dropoff_address", "dropoff_addr", "dropoff"],
-    type: ["shipment_type", "type"],
-    colli: ["colli_count", "colli"],
-    kg: ["weight_kg", "kg", "weight"],
-  };
-
-  const STATUS_NL = {
-    created: "Aangemeld",
-    pickup: "Opgehaald",
-    in_transit: "Onderweg",
-    en_route: "Onderweg",
-    delivered: "Afgeleverd",
-    problem: "Probleem gemeld",
-  };
-
-  const EVENT_NL = {
-    created: { title: "Aangemeld", desc: "Zending aangemeld" },
-    pickup: { title: "Opgehaald", desc: "Zending opgehaald" },
-    in_transit: { title: "Onderweg", desc: "Zending is onderweg" },
-    en_route: { title: "Onderweg", desc: "Zending is onderweg" },
-    delivered: { title: "Afgeleverd", desc: "Zending afgeleverd" },
-    problem: { title: "Probleem", desc: "Probleem gemeld" },
-    note: { title: "Update", desc: "Statusupdate" },
-  };
-
-  function pickFirst(obj, keys) {
-    for (const k of keys) {
-      if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
-    }
-    return "-";
+  function showMsg(el, text, type = "ok") {
+    if (!el) return;
+    el.style.display = "block";
+    el.className = `msg ${type}`;
+    el.textContent = text;
+  }
+  function clearMsg(el) {
+    if (!el) return;
+    el.style.display = "none";
+    el.textContent = "";
   }
 
   function escapeHtml(s) {
@@ -49,222 +19,136 @@
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+      .replaceAll('"', "&quot;");
   }
 
-  function setMsg(text, type = "ok") {
-    const el = $("#statusMsg");
-    if (!el) return;
-    el.style.display = "block";
-    el.textContent = text || "";
-    el.className = "msg " + (type === "bad" ? "bad" : "ok");
-  }
-  function clearMsg() {
-    const el = $("#statusMsg");
-    if (!el) return;
-    el.style.display = "none";
-    el.textContent = "";
+  function statusLabel(status) {
+    const map = {
+      created: "Aangemeld",
+      pickup: "Opgehaald",
+      in_transit: "Onderweg",
+      delivered: "Afgeleverd",
+      problem: "Probleem",
+      archived: "Afgehandeld",
+    };
+    return map[status] || status || "-";
   }
 
-  function fmtDate(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
+  function fmtDate(dt) {
+    if (!dt) return "-";
+    const d = new Date(dt);
     const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  }
-
-  function safeJsonParse(str) {
-    try { return JSON.parse(str); } catch { return null; }
-  }
-
-  function statusLabel(code) {
-    return STATUS_NL[code] || code || "-";
-  }
-
-  function renderShipment(shipment) {
-    const result = $("#result");
-    if (!result) return;
-
-    const pickupAddr = pickFirst(shipment, COLS.pickup);
-    const dropoffAddr = pickFirst(shipment, COLS.dropoff);
-    const type = pickFirst(shipment, COLS.type);
-    const colli = pickFirst(shipment, COLS.colli);
-    const kg = pickFirst(shipment, COLS.kg);
-
-    result.innerHTML = `
-      <div class="box">
-        <div style="font-weight:800; font-size:18px;">Zending gevonden</div>
-        <div><b>Klant:</b> ${escapeHtml(shipment.customer_name || "-")}</div>
-        <div><b>Trackcode:</b> ${escapeHtml(shipment.track_code || "-")}</div>
-        <div><b>Status:</b> ${escapeHtml(statusLabel(shipment.status))}</div>
-        <div style="height:10px"></div>
-        <div><b>Ophaaladres:</b> ${escapeHtml(pickupAddr)}</div>
-        <div><b>Bezorgadres:</b> ${escapeHtml(dropoffAddr)}</div>
-        <div><b>Type zending:</b> ${escapeHtml(type)}</div>
-        <div><b>Colli:</b> ${escapeHtml(colli)}</div>
-        <div><b>Kg:</b> ${escapeHtml(kg)}</div>
-      </div>
-    `;
-  }
-
-  function renderTimeline(events, shipment) {
-    const tl = $("#timeline");
-    if (!tl) return;
-
-    // Als er geen events zijn, toon iig created op basis van shipment.created_at
-    if (!events || events.length === 0) {
-      if (shipment?.created_at) {
-        tl.innerHTML = `
-          <div class="timeline-item">
-            <div class="timeline-title">Aangemeld</div>
-            <div class="muted">Zending aangemeld</div>
-            <div class="muted">${escapeHtml(fmtDate(shipment.created_at))}</div>
-          </div>
-        `;
-        return;
-      }
-      tl.innerHTML = `<div class="muted">Nog geen statusupdates beschikbaar.</div>`;
-      return;
-    }
-
-    const sorted = [...events].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-
-    tl.innerHTML = sorted.map((ev) => {
-      const key = ev.event_type || "note";
-      const meta = EVENT_NL[key] || { title: key, desc: "" };
-      const when = fmtDate(ev.created_at);
-
-      let extra = "";
-      if (key === "delivered" && ev.note) {
-        const j = safeJsonParse(ev.note);
-        if (j && (j.received_by || j.note)) {
-          extra = `<div class="muted">Ontvangen door: ${escapeHtml(j.received_by || "-")}${j.note ? " — " + escapeHtml(j.note) : ""}</div>`;
-        } else {
-          extra = `<div class="muted">${escapeHtml(ev.note)}</div>`;
-        }
-      } else if (ev.note) {
-        extra = `<div class="muted">${escapeHtml(ev.note)}</div>`;
-      }
-
-      return `
-        <div class="timeline-item">
-          <div class="timeline-title">${escapeHtml(meta.title)}</div>
-          <div class="muted">${escapeHtml(meta.desc)}</div>
-          ${extra}
-          <div class="muted">${escapeHtml(when)}</div>
-        </div>
-      `;
-    }).join("");
-  }
-
-  async function fetchShipmentByTrackCode(trackCode) {
-    const { data, error } = await sb
-      .from("shipments")
-      .select("*")
-      .eq("track_code", trackCode)
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    return data;
-  }
-
-  async function fetchEventsForShipment(shipmentId) {
-    const { data, error } = await sb
-      .from("shipment_events")
-      .select("id, shipment_id, event_type, note, created_at")
-      .eq("shipment_id", shipmentId)
-      .order("created_at", { ascending: true });
-    if (error) throw error;
-    return data || [];
-  }
-
-  let currentSub = null;
-  function stopRealtime() {
-    try { if (currentSub) sb.removeChannel(currentSub); } catch {}
-    currentSub = null;
-  }
-
-  function startRealtime(shipmentId, onUpdate) {
-    stopRealtime();
-    currentSub = sb
-      .channel(`shipment_events:${shipmentId}`)
-      .on("postgres_changes",
-        { event: "*", schema: "public", table: "shipment_events", filter: `shipment_id=eq.${shipmentId}` },
-        () => onUpdate()
-      )
-      .subscribe();
+    return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   async function runSearch() {
+    const trackInput = $("trackInput");
+    const searchBtn = $("searchBtn");
+    const statusMsg = $("statusMsg");
+    const resultEl = $("result");
+    const timelineEl = $("timeline");
+
+    if (!window.supabaseClient) {
+      showMsg(statusMsg, "Supabase client ontbreekt. Check supabase-config.js", "bad");
+      return;
+    }
+
+    // voorkom null crashes
+    if (!trackInput || !searchBtn || !statusMsg || !resultEl || !timelineEl) {
+      console.error("Ontbrekende HTML elementen:", { trackInput, searchBtn, statusMsg, resultEl, timelineEl });
+      alert("Track & Trace: HTML IDs ontbreken (check console).");
+      return;
+    }
+
+    clearMsg(statusMsg);
+    resultEl.innerHTML = "";
+    timelineEl.innerHTML = "";
+
+    const code = (trackInput.value || "").trim();
+    if (!code) {
+      showMsg(statusMsg, "Vul een trackcode in.", "bad");
+      return;
+    }
+
+    searchBtn.disabled = true;
+    searchBtn.textContent = "Zoeken...";
+
     try {
-      const trackCode = ($("#trackInput")?.value || "").trim().toUpperCase();
-      clearReminder();
+      // shipment zoeken
+      const { data: shipment, error: sErr } = await supabaseClient
+        .from("shipments")
+        .select("id, track_code, customer_name, status, pickup_address, dropoff_address, shipment_type, colli_count, weight_kg")
+        .eq("track_code", code)
+        .maybeSingle();
 
-      const result = $("#result");
-      const tl = $("#timeline");
-      if (result) result.innerHTML = "";
-      if (tl) tl.innerHTML = "";
-
-      if (!trackCode) {
-        setMsg("Vul een trackcode in.", "bad");
-        return;
-      }
-
-      setMsg("Zoeken…", "ok");
-
-      const shipment = await fetchShipmentByTrackCode(trackCode);
+      if (sErr) throw sErr;
       if (!shipment) {
-        stopRealtime();
-        setMsg("Geen zending gevonden met deze trackcode.", "bad");
+        showMsg(statusMsg, "Niet gevonden.", "bad");
         return;
       }
 
-      renderShipment(shipment);
+      showMsg(statusMsg, "Gevonden ✅ (realtime actief)", "ok");
 
-      const events = await fetchEventsForShipment(shipment.id);
-      renderTimeline(events, shipment);
+      resultEl.innerHTML = `
+        <div style="font-weight:700;margin-top:10px;">Zending gevonden</div>
+        <div><b>Klant:</b> ${escapeHtml(shipment.customer_name || "-")}</div>
+        <div><b>Trackcode:</b> ${escapeHtml(shipment.track_code)}</div>
+        <div><b>Status:</b> ${escapeHtml(statusLabel(shipment.status))}</div>
 
-      setMsg("Gevonden ✅ (realtime actief)", "ok");
+        <div style="margin-top:8px;">
+          <div><b>Ophaaladres:</b> ${escapeHtml(shipment.pickup_address || "-")}</div>
+          <div><b>Bezorgadres:</b> ${escapeHtml(shipment.dropoff_address || "-")}</div>
+          <div><b>Type zending:</b> ${escapeHtml(shipment.shipment_type || "-")}</div>
+          <div><b>Colli:</b> ${escapeHtml(String(shipment.colli_count ?? "-"))}</div>
+          <div><b>Kg:</b> ${escapeHtml(String(shipment.weight_kg ?? "-"))}</div>
+        </div>
 
-      startRealtime(shipment.id, async () => {
-        const refreshed = await fetchShipmentByTrackCode(trackCode);
-        const evs = await fetchEventsForShipment(shipment.id);
-        if (refreshed) renderShipment(refreshed);
-        renderTimeline(evs, refreshed || shipment);
-      });
+        <div style="margin-top:10px;font-weight:700;">Timeline</div>
+      `;
+
+      // events laden
+      const { data: events, error: eErr } = await supabaseClient
+        .from("shipment_events")
+        .select("event_type, created_at, note, receiver_name")
+        .eq("shipment_id", shipment.id)
+        .order("created_at", { ascending: true });
+
+      if (eErr) throw eErr;
+
+      if (!events || events.length === 0) {
+        timelineEl.innerHTML = `<div class="muted">Nog geen statusupdates beschikbaar.</div>`;
+        return;
+      }
+
+      timelineEl.innerHTML = events.map(ev => `
+        <div class="timeline-item">
+          <div style="font-weight:700;">${escapeHtml(statusLabel(ev.event_type))}</div>
+          <div class="muted">${escapeHtml(fmtDate(ev.created_at))}</div>
+          ${ev.receiver_name ? `<div class="muted">Ontvangen door: ${escapeHtml(ev.receiver_name)}</div>` : ""}
+          ${ev.note ? `<div class="muted">${escapeHtml(ev.note)}</div>` : ""}
+        </div>
+      `).join("");
+
     } catch (e) {
-      console.error("[DVK][track] error:", e);
-      setMsg("Fout bij laden (check console).", "bad");
+      console.error(e);
+      showMsg(statusMsg, `Fout bij laden: ${e.message}`, "bad");
+    } finally {
+      searchBtn.disabled = false;
+      searchBtn.textContent = "Zoeken";
     }
   }
 
-  function clearReminder() {
-    // alias voor clearMsg (Safari users zien soms dubbel)
-    clearMsg();
-  }
+  function boot() {
+    const searchBtn = $("searchBtn");
+    const trackInput = $("trackInput");
 
-  function bind() {
-    if (!sb) {
-      console.error("[DVK][track] supabaseClient ontbreekt. Check supabase-config.js");
-      return;
-    }
+    if (!searchBtn || !trackInput) return;
 
-    const btn = $("#searchBtn");
-    const input = $("#trackInput");
-
-    if (!btn || !input) {
-      console.error("[DVK][track] DOM mist #searchBtn of #trackInput");
-      return;
-    }
-
-    btn.addEventListener("click", runSearch);
-    input.addEventListener("keydown", (e) => {
+    searchBtn.addEventListener("click", runSearch);
+    trackInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") runSearch();
     });
-
-    console.log("[DVK][track] bind OK");
   }
 
-  bind();
+  document.addEventListener("DOMContentLoaded", boot);
 })();
