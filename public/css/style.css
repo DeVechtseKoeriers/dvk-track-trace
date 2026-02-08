@@ -274,3 +274,9 @@ select{
   .top{ flex-direction: column; }
   button, .btn{ width: 100%; }
 }
+
+/* Status knop: alleen de actieve licht groen op */
+.btn.active{
+  outline: 2px solid rgba(34,197,94,.9);
+  box-shadow: 0 0 0 4px rgba(34,197,94,.18);
+}
